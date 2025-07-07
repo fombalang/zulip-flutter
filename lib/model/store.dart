@@ -19,20 +19,46 @@ import '../api/backoff.dart';
 import '../api/route/realm.dart';
 import '../log.dart';
 import '../notifications/receive.dart';
+import 'actions.dart';
 import 'autocomplete.dart';
 import 'database.dart';
 import 'emoji.dart';
 import 'localizations.dart';
 import 'message.dart';
 import 'message_list.dart';
+import 'presence.dart';
 import 'recent_dm_conversations.dart';
 import 'recent_senders.dart';
 import 'channel.dart';
+import 'saved_snippet.dart';
+import 'settings.dart';
 import 'typing_status.dart';
 import 'unreads.dart';
+import 'user.dart';
 
 export 'package:drift/drift.dart' show Value;
 export 'database.dart' show Account, AccountsCompanion, AccountAlreadyExistsException;
+
+/// An underlying data store that can support a [GlobalStore],
+/// possibly storing the data to persist between runs of the app.
+///
+/// In the real app, the implementation used is [LiveGlobalStoreBackend],
+/// which stores data persistently in a database on the user's device.
+/// This interface enables tests to use a different implementation.
+abstract class GlobalStoreBackend {
+  /// Update the global settings in the underlying data store.
+  ///
+  /// This should only be called from [GlobalSettingsStore].
+  Future<void> doUpdateGlobalSettings(GlobalSettingsCompanion data);
+
+  /// Set or unset the given bool-valued setting in the underlying data store.
+  ///
+  /// This should only be called from [GlobalSettingsStore].
+  Future<void> doSetBoolGlobalSetting(BoolGlobalSetting setting, bool? value);
+
+  // TODO move here the similar methods for accounts;
+  //   perhaps the rest of the GlobalStore abstract methods, too.
+}
 
 /// Store for all the user's data.
 ///
@@ -51,13 +77,27 @@ export 'database.dart' show Account, AccountsCompanion, AccountAlreadyExistsExce
 ///  * [LiveGlobalStore], the implementation of this class that
 ///    we use outside of tests.
 abstract class GlobalStore extends ChangeNotifier {
-  GlobalStore({required Iterable<Account> accounts})
-    : _accounts = Map.fromEntries(accounts.map((a) => MapEntry(a.id, a)));
+  GlobalStore({
+    required GlobalStoreBackend backend,
+    required GlobalSettingsData globalSettings,
+    required Map<BoolGlobalSetting, bool> boolGlobalSettings,
+    required Iterable<Account> accounts,
+  })
+    : settings = GlobalSettingsStore(backend: backend,
+        data: globalSettings, boolData: boolGlobalSettings),
+      _accounts = Map.fromEntries(accounts.map((a) => MapEntry(a.id, a)));
+
+  /// The store for the user's account-independent settings.
+  ///
+  /// When the settings data changes, the [GlobalSettingsStore] will notify
+  /// its listeners, but the [GlobalStore] will not notify its own listeners.
+  /// Consider using [GlobalStoreWidget.settingsOf], which automatically
+  /// subscribes to changes in the [GlobalSettingsStore].
+  final GlobalSettingsStore settings;
 
   /// A cache of the [Accounts] table in the underlying data store.
   final Map<int, Account> _accounts;
 
-  // TODO settings (those that are per-device rather than per-account)
   // TODO push token, and other data corresponding to GlobalSessionState
 
   /// Construct a new [ApiConnection], real or fake as appropriate.
@@ -122,13 +162,17 @@ abstract class GlobalStore extends ChangeNotifier {
     // It's up to us.  Start loading.
     future = loadPerAccount(accountId);
     _perAccountStoresLoading[accountId] = future;
-    store = await future;
-    _setPerAccount(accountId, store);
-    unawaited(_perAccountStoresLoading.remove(accountId));
-    return store;
+    try {
+      store = await future;
+      _setPerAccount(accountId, store);
+      return store;
+    } finally {
+      unawaited(_perAccountStoresLoading.remove(accountId));
+    }
   }
 
   Future<void> _reloadPerAccount(int accountId) async {
+    assert(_accounts.containsKey(accountId));
     assert(_perAccountStores.containsKey(accountId));
     assert(!_perAccountStoresLoading.containsKey(accountId));
     final store = await loadPerAccount(accountId);
@@ -144,21 +188,64 @@ abstract class GlobalStore extends ChangeNotifier {
 
   /// Load per-account data for the given account, unconditionally.
   ///
+  /// The account for `accountId` must exist.
+  ///
+  /// Throws [AccountNotFoundException] if after any async gap
+  /// the account has been removed.
+  ///
   /// This method should be called only by the implementation of [perAccount].
   /// Other callers interested in per-account data should use [perAccount]
   /// and/or [perAccountSync].
   Future<PerAccountStore> loadPerAccount(int accountId) async {
     assert(_accounts.containsKey(accountId));
-    final store = await doLoadPerAccount(accountId);
-    if (!_accounts.containsKey(accountId)) {
-      // [removeAccount] was called during [doLoadPerAccount].
-      store.dispose();
-      throw AccountNotFoundException();
+    final PerAccountStore store;
+    try {
+      store = await doLoadPerAccount(accountId);
+    } on AccountNotFoundException {
+      rethrow;
+    } catch (e) {
+      final account = getAccount(accountId);
+      assert(account != null); // doLoadPerAccount would have thrown AccountNotFoundException
+      final zulipLocalizations = GlobalLocalizations.zulipLocalizations;
+      switch (e) {
+        case _ServerVersionUnsupportedException():
+          reportErrorToUserModally(
+            zulipLocalizations.errorCouldNotConnectTitle,
+            message: zulipLocalizations.errorServerVersionUnsupportedMessage(
+              account!.realmUrl.toString(),
+              e.data.zulipVersion,
+              kMinSupportedZulipVersion),
+            learnMoreButtonUrl: kServerSupportDocUrl);
+          // The important thing is to tear down per-account UI,
+          // and logOutAccount conveniently handles that already.
+          // It's not ideal to force the user to reauthenticate when they retry,
+          // and we can revisit that later if needed.
+          await logOutAccount(this, accountId);
+          throw AccountNotFoundException();
+        case HttpException(httpStatus: 401):
+          // The API key is invalid and the store can never be loaded
+          // unless the user retries manually.
+          reportErrorToUserModally(
+            zulipLocalizations.errorCouldNotConnectTitle,
+            message: zulipLocalizations.errorInvalidApiKeyMessage(
+              account!.realmUrl.toString()));
+          await logOutAccount(this, accountId);
+          throw AccountNotFoundException();
+        default:
+          rethrow;
+      }
     }
+    // doLoadPerAccount would have thrown AccountNotFoundException
+    assert(_accounts.containsKey(accountId));
     return store;
   }
 
   /// Load per-account data for the given account, unconditionally.
+  ///
+  /// The account for `accountId` must exist.
+  ///
+  /// Throws [AccountNotFoundException] if after any async gap
+  /// the account has been removed.
   ///
   /// This method should be called only by [loadPerAccount].
   Future<PerAccountStore> doLoadPerAccount(int accountId);
@@ -206,10 +293,23 @@ abstract class GlobalStore extends ChangeNotifier {
     return result;
   }
 
+  /// Update an account with [ZulipVersionData], returning the new version.
+  ///
+  /// The account must already exist in the store.
+  Future<Account> updateZulipVersionData(int accountId, ZulipVersionData data) async {
+    assert(_accounts.containsKey(accountId));
+    return updateAccount(accountId, AccountsCompanion(
+      zulipVersion: Value(data.zulipVersion),
+      zulipMergeBase: Value(data.zulipMergeBase),
+      zulipFeatureLevel: Value(data.zulipFeatureLevel)));
+  }
+
   /// Update an account in the underlying data store.
   Future<void> doUpdateAccount(int accountId, AccountsCompanion data);
 
   /// Remove an account from the store.
+  ///
+  /// The account for `accountId` must exist.
   Future<void> removeAccount(int accountId) async {
     assert(_accounts.containsKey(accountId));
     await doRemoveAccount(accountId);
@@ -229,6 +329,102 @@ abstract class GlobalStore extends ChangeNotifier {
 
 class AccountNotFoundException implements Exception {}
 
+/// A bundle of items that are useful to [PerAccountStore] and its substores.
+///
+/// Each instance of this class is constructed as part of constructing a
+/// [PerAccountStore] instance,
+/// and is shared by that [PerAccountStore] and its substores.
+/// Calling [PerAccountStore.dispose] also disposes the [CorePerAccountStore]
+/// (for example, it calls [ApiConnection.dispose] on [connection]).
+class CorePerAccountStore {
+  CorePerAccountStore._({
+    required GlobalStore globalStore,
+    required this.connection,
+    required this.queueId,
+    required this.accountId,
+    required this.selfUserId,
+  }) : _globalStore = globalStore,
+       assert(connection.realmUrl == globalStore.getAccount(accountId)!.realmUrl);
+
+  final GlobalStore _globalStore;
+  final ApiConnection connection; // TODO(#135): update zulipFeatureLevel with events
+  final String queueId;
+  final int accountId;
+
+  // This isn't strictly needed as a field; it could be a getter
+  // that uses `_globalStore.getAccount(accountId)`.
+  // But we denormalize it here to save a hash-table lookup every time
+  // the self-user ID is needed, which can be often.
+  // It never changes on the account; see [GlobalStore.updateAccount].
+  final int selfUserId;
+}
+
+/// A base class for [PerAccountStore] and its substores,
+/// with getters providing the items in [CorePerAccountStore].
+abstract class PerAccountStoreBase {
+  PerAccountStoreBase({required CorePerAccountStore core})
+    : _core = core;
+
+  final CorePerAccountStore _core;
+
+  ////////////////////////////////
+  // Where data comes from in the first place.
+
+  GlobalStore get _globalStore => _core._globalStore;
+
+  ApiConnection get connection => _core.connection;
+
+  String get queueId => _core.queueId;
+
+  ////////////////////////////////
+  // Data attached to the realm or the server.
+
+  /// Always equal to `account.realmUrl` and `connection.realmUrl`.
+  Uri get realmUrl => connection.realmUrl;
+
+  /// Resolve [reference] as a URL relative to [realmUrl].
+  ///
+  /// This returns null if [reference] fails to parse as a URL.
+  Uri? tryResolveUrl(String reference) => _tryResolveUrl(realmUrl, reference);
+
+  /// Always equal to `connection.zulipFeatureLevel`
+  /// and `account.zulipFeatureLevel`.
+  int get zulipFeatureLevel => connection.zulipFeatureLevel!;
+
+  String get zulipVersion => account.zulipVersion;
+
+  ////////////////////////////////
+  // Data attached to the self-account on the realm.
+
+  int get accountId => _core.accountId;
+
+  /// The [Account] this store belongs to.
+  ///
+  /// Will throw if the account has been removed from the global store,
+  /// which is possible only if [PerAccountStore.dispose] has been called
+  /// on this store.
+  Account get account => _globalStore.getAccount(accountId)!;
+
+  /// The user ID of the "self-user",
+  /// i.e. the account the person using this app is logged into.
+  ///
+  /// This always equals the [Account.userId] on [account].
+  ///
+  /// For the corresponding [User] object, see [UserStore.selfUser].
+  int get selfUserId => _core.selfUserId;
+}
+
+const _tryResolveUrl = tryResolveUrl;
+
+/// Like [Uri.resolve], but on failure return null instead of throwing.
+Uri? tryResolveUrl(Uri baseUrl, String reference) {
+  try {
+    return baseUrl.resolve(reference);
+  } on FormatException {
+    return null;
+  }
+}
+
 /// Store for the user's data for a given Zulip account.
 ///
 /// This should always have a consistent snapshot of the state on the server,
@@ -237,7 +433,7 @@ class AccountNotFoundException implements Exception {}
 /// This class does not attempt to poll an event queue
 /// to keep the data up to date.  For that behavior, see
 /// [UpdateMachine].
-class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, MessageStore {
+class PerAccountStore extends PerAccountStoreBase with ChangeNotifier, EmojiStore, SavedSnippetStore, UserStore, ChannelStore, MessageStore {
   /// Construct a store for the user's data, starting from the given snapshot.
   ///
   /// The global store must already have been updated with
@@ -262,78 +458,101 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
     connection ??= globalStore.apiConnectionFromAccount(account);
     assert(connection.zulipFeatureLevel == account.zulipFeatureLevel);
 
-    final realmUrl = account.realmUrl;
-    final channels = ChannelStoreImpl(initialSnapshot: initialSnapshot);
-    return PerAccountStore._(
+    final queueId = initialSnapshot.queueId;
+    if (queueId == null) {
+      // The queueId is optional in the type, but should only be missing in the
+      // case of unauthenticated access to a web-public realm.  We authenticated.
+      throw Exception("bad initial snapshot: missing queueId");
+    }
+
+    final core = CorePerAccountStore._(
       globalStore: globalStore,
       connection: connection,
-      realmUrl: realmUrl,
+      queueId: queueId,
+      accountId: accountId,
+      selfUserId: account.userId,
+    );
+    final channels = ChannelStoreImpl(initialSnapshot: initialSnapshot);
+    return PerAccountStore._(
+      core: core,
+      serverPresencePingIntervalSeconds: initialSnapshot.serverPresencePingIntervalSeconds,
+      serverPresenceOfflineThresholdSeconds: initialSnapshot.serverPresenceOfflineThresholdSeconds,
+      realmWildcardMentionPolicy: initialSnapshot.realmWildcardMentionPolicy,
+      realmMandatoryTopics: initialSnapshot.realmMandatoryTopics,
       realmWaitingPeriodThreshold: initialSnapshot.realmWaitingPeriodThreshold,
+      realmPresenceDisabled: initialSnapshot.realmPresenceDisabled,
       maxFileUploadSizeMib: initialSnapshot.maxFileUploadSizeMib,
+      realmEmptyTopicDisplayName: initialSnapshot.realmEmptyTopicDisplayName,
+      realmAllowMessageEditing: initialSnapshot.realmAllowMessageEditing,
+      realmMessageContentEditLimitSeconds: initialSnapshot.realmMessageContentEditLimitSeconds,
       realmDefaultExternalAccounts: initialSnapshot.realmDefaultExternalAccounts,
       customProfileFields: _sortCustomProfileFields(initialSnapshot.customProfileFields),
       emailAddressVisibility: initialSnapshot.emailAddressVisibility,
       emoji: EmojiStoreImpl(
-        realmUrl: realmUrl, allRealmEmoji: initialSnapshot.realmEmoji),
-      accountId: accountId,
-      selfUserId: account.userId,
+        core: core, allRealmEmoji: initialSnapshot.realmEmoji),
       userSettings: initialSnapshot.userSettings,
+      savedSnippets: SavedSnippetStoreImpl(
+        core: core, savedSnippets: initialSnapshot.savedSnippets ?? []),
       typingNotifier: TypingNotifier(
-        connection: connection,
+        core: core,
         typingStoppedWaitPeriod: Duration(
           milliseconds: initialSnapshot.serverTypingStoppedWaitPeriodMilliseconds),
         typingStartedWaitPeriod: Duration(
           milliseconds: initialSnapshot.serverTypingStartedWaitPeriodMilliseconds),
       ),
-      users: Map.fromEntries(
-        initialSnapshot.realmUsers
-        .followedBy(initialSnapshot.realmNonActiveUsers)
-        .followedBy(initialSnapshot.crossRealmBots)
-        .map((user) => MapEntry(user.userId, user))),
-      typingStatus: TypingStatus(
-        selfUserId: account.userId,
-        typingStartedExpiryPeriod: Duration(milliseconds: initialSnapshot.serverTypingStartedExpiryPeriodMilliseconds),
-      ),
+      users: UserStoreImpl(core: core, initialSnapshot: initialSnapshot),
+      typingStatus: TypingStatus(core: core,
+        typingStartedExpiryPeriod: Duration(milliseconds: initialSnapshot.serverTypingStartedExpiryPeriodMilliseconds)),
+      presence: Presence(core: core,
+        serverPresencePingInterval: Duration(seconds: initialSnapshot.serverPresencePingIntervalSeconds),
+        serverPresenceOfflineThresholdSeconds: initialSnapshot.serverPresenceOfflineThresholdSeconds,
+        realmPresenceDisabled: initialSnapshot.realmPresenceDisabled,
+        initial: initialSnapshot.presences),
       channels: channels,
-      messages: MessageStoreImpl(),
+      messages: MessageStoreImpl(core: core,
+        realmEmptyTopicDisplayName: initialSnapshot.realmEmptyTopicDisplayName),
       unreads: Unreads(
         initial: initialSnapshot.unreadMsgs,
-        selfUserId: account.userId,
+        core: core,
         channelStore: channels,
       ),
-      recentDmConversationsView: RecentDmConversationsView(
-        initial: initialSnapshot.recentPrivateConversations, selfUserId: account.userId),
+      recentDmConversationsView: RecentDmConversationsView(core: core,
+        initial: initialSnapshot.recentPrivateConversations),
       recentSenders: RecentSenders(),
     );
   }
 
   PerAccountStore._({
-    required GlobalStore globalStore,
-    required this.connection,
-    required this.realmUrl,
+    required super.core,
+    required this.serverPresencePingIntervalSeconds,
+    required this.serverPresenceOfflineThresholdSeconds,
+    required this.realmWildcardMentionPolicy,
+    required this.realmMandatoryTopics,
     required this.realmWaitingPeriodThreshold,
+    required this.realmPresenceDisabled,
     required this.maxFileUploadSizeMib,
+    required String? realmEmptyTopicDisplayName,
+    required this.realmAllowMessageEditing,
+    required this.realmMessageContentEditLimitSeconds,
     required this.realmDefaultExternalAccounts,
     required this.customProfileFields,
     required this.emailAddressVisibility,
     required EmojiStoreImpl emoji,
-    required this.accountId,
-    required this.selfUserId,
     required this.userSettings,
+    required SavedSnippetStoreImpl savedSnippets,
     required this.typingNotifier,
-    required this.users,
+    required UserStoreImpl users,
     required this.typingStatus,
+    required this.presence,
     required ChannelStoreImpl channels,
     required MessageStoreImpl messages,
     required this.unreads,
     required this.recentDmConversationsView,
     required this.recentSenders,
-  }) : assert(selfUserId == globalStore.getAccount(accountId)!.userId),
-       assert(realmUrl == globalStore.getAccount(accountId)!.realmUrl),
-       assert(realmUrl == connection.realmUrl),
-       assert(emoji.realmUrl == realmUrl),
-       _globalStore = globalStore,
+  }) : _realmEmptyTopicDisplayName = realmEmptyTopicDisplayName,
        _emoji = emoji,
+       _savedSnippets = savedSnippets,
+       _users = users,
        _channels = channels,
        _messages = messages;
 
@@ -342,9 +561,6 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
 
   ////////////////////////////////
   // Where data comes from in the first place.
-
-  final GlobalStore _globalStore;
-  final ApiConnection connection; // TODO(#135): update zulipFeatureLevel with events
 
   UpdateMachine? get updateMachine => _updateMachine;
   UpdateMachine? _updateMachine;
@@ -366,18 +582,30 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   ////////////////////////////////
   // Data attached to the realm or the server.
 
-  /// Always equal to `account.realmUrl` and `connection.realmUrl`.
-  final Uri realmUrl;
+  final int serverPresencePingIntervalSeconds;
+  final int serverPresenceOfflineThresholdSeconds;
 
-  /// Resolve [reference] as a URL relative to [realmUrl].
-  ///
-  /// This returns null if [reference] fails to parse as a URL.
-  Uri? tryResolveUrl(String reference) => _tryResolveUrl(realmUrl, reference);
-
-  String get zulipVersion => account.zulipVersion;
+  final RealmWildcardMentionPolicy realmWildcardMentionPolicy; // TODO(#668): update this realm setting
+  final bool realmMandatoryTopics;  // TODO(#668): update this realm setting
   /// For docs, please see [InitialSnapshot.realmWaitingPeriodThreshold].
   final int realmWaitingPeriodThreshold;  // TODO(#668): update this realm setting
+  final bool realmAllowMessageEditing; // TODO(#668): update this realm setting
+  final int? realmMessageContentEditLimitSeconds; // TODO(#668): update this realm setting
+  final bool realmPresenceDisabled; // TODO(#668): update this realm setting
   final int maxFileUploadSizeMib; // No event for this.
+
+  /// The display name to use for empty topics.
+  ///
+  /// This should only be accessed when FL >= 334, since topics cannot
+  /// be empty otherwise.
+  // TODO(server-10) simplify this
+  String get realmEmptyTopicDisplayName {
+    assert(zulipFeatureLevel >= 334);
+    assert(_realmEmptyTopicDisplayName != null); // TODO(log)
+    return _realmEmptyTopicDisplayName ?? 'general chat';
+  }
+  final String? _realmEmptyTopicDisplayName; // TODO(#668): update this realm setting
+
   final Map<String, RealmDefaultExternalAccount> realmDefaultExternalAccounts;
   List<CustomProfileField> customProfileFields;
   /// For docs, please see [InitialSnapshot.emailAddressVisibility].
@@ -406,6 +634,9 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   }
 
   @override
+  Iterable<EmojiCandidate> popularEmojiCandidates() => _emoji.popularEmojiCandidates();
+
+  @override
   Iterable<EmojiCandidate> allEmojiCandidates() => _emoji.allEmojiCandidates();
 
   EmojiStoreImpl _emoji;
@@ -413,26 +644,32 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   ////////////////////////////////
   // Data attached to the self-account on the realm.
 
-  final int accountId;
-
-  /// The [Account] this store belongs to.
-  ///
-  /// Will throw if called after [dispose] has been called.
-  Account get account => _globalStore.getAccount(accountId)!;
-
-  /// Always equal to `account.userId`.
-  final int selfUserId;
-
   final UserSettings? userSettings; // TODO(server-5)
+
+  @override
+  Map<int, SavedSnippet> get savedSnippets => _savedSnippets.savedSnippets;
+  final SavedSnippetStoreImpl _savedSnippets;
 
   final TypingNotifier typingNotifier;
 
   ////////////////////////////////
   // Users and data about them.
 
-  final Map<int, User> users;
+  @override
+  User? getUser(int userId) => _users.getUser(userId);
+
+  @override
+  Iterable<User> get allUsers => _users.allUsers;
+
+  @override
+  bool isUserMuted(int userId, {MutedUsersEvent? event}) =>
+    _users.isUserMuted(userId, event: event);
+
+  final UserStoreImpl _users;
 
   final TypingStatus typingStatus;
+
+  final Presence presence;
 
   /// Whether [user] has passed the realm's waiting period to be a full member.
   ///
@@ -456,6 +693,36 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
     return byDate.difference(dateJoined).inDays >= realmWaitingPeriodThreshold;
   }
 
+  /// The user's real email address, if known, for displaying in the UI.
+  ///
+  /// Returns null if self-user isn't able to see the user's real email address,
+  /// or if the user isn't actually a user we know about.
+  String? userDisplayEmail(int userId) {
+    final user = getUser(userId);
+    if (user == null) return null;
+    if (zulipFeatureLevel >= 163) { // TODO(server-7)
+      // A non-null value means self-user has access to [user]'s real email,
+      // while a null value means it doesn't have access to the email.
+      // Search for "delivery_email" in https://zulip.com/api/register-queue.
+      return user.deliveryEmail;
+    } else {
+      if (user.deliveryEmail != null) {
+        // A non-null value means self-user has access to [user]'s real email,
+        // while a null value doesn't necessarily mean it doesn't have access
+        // to the email, ....
+        return user.deliveryEmail;
+      } else if (emailAddressVisibility == EmailAddressVisibility.everyone) {
+        // ... we have to also check for [PerAccountStore.emailAddressVisibility].
+        // See:
+        //   * https://github.com/zulip/zulip-mobile/pull/5515#discussion_r997731727
+        //   * https://chat.zulip.org/#narrow/stream/378-api-design/topic/email.20address.20visibility/near/1296133
+        return user.email;
+      } else {
+        return null;
+      }
+    }
+  }
+
   ////////////////////////////////
   // Streams, topics, and stuff about them.
 
@@ -466,10 +733,10 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   @override
   Map<int, Subscription> get subscriptions => _channels.subscriptions;
   @override
-  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, String topic) =>
+  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, TopicName topic) =>
     _channels.topicVisibilityPolicy(streamId, topic);
   @override
-  Map<int, Map<String, UserTopicVisibilityPolicy>> get debugTopicVisibility =>
+  Map<int, Map<TopicName, UserTopicVisibilityPolicy>> get debugTopicVisibility =>
     _channels.debugTopicVisibility;
 
   final ChannelStoreImpl _channels;
@@ -504,16 +771,49 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   @override
   Map<int, Message> get messages => _messages.messages;
   @override
+  Map<int, OutboxMessage> get outboxMessages => _messages.outboxMessages;
+  @override
   void registerMessageList(MessageListView view) =>
     _messages.registerMessageList(view);
   @override
   void unregisterMessageList(MessageListView view) =>
     _messages.unregisterMessageList(view);
   @override
+  void markReadFromScroll(Iterable<int> messageIds) =>
+    _messages.markReadFromScroll(messageIds);
+  @override
+  Future<void> sendMessage({required MessageDestination destination, required String content}) {
+    assert(!_disposed);
+    return _messages.sendMessage(destination: destination, content: content);
+  }
+  @override
+  OutboxMessage takeOutboxMessage(int localMessageId) =>
+    _messages.takeOutboxMessage(localMessageId);
+  @override
   void reconcileMessages(List<Message> messages) {
     _messages.reconcileMessages(messages);
     // TODO(#649) notify [unreads] of the just-fetched messages
     // TODO(#650) notify [recentDmConversationsView] of the just-fetched messages
+  }
+  @override
+  bool? getEditMessageErrorStatus(int messageId) {
+    assert(!_disposed);
+    return _messages.getEditMessageErrorStatus(messageId);
+  }
+  @override
+  void editMessage({
+    required int messageId,
+    required String originalRawContent,
+    required String newContent,
+  }) {
+    assert(!_disposed);
+    return _messages.editMessage(messageId: messageId,
+      originalRawContent: originalRawContent, newContent: newContent);
+  }
+  @override
+  ({String originalRawContent, String newContent}) takeFailedMessageEdit(int messageId) {
+    assert(!_disposed);
+    return _messages.takeFailedMessageEdit(messageId);
   }
 
   @override
@@ -599,45 +899,24 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
 
       case RealmUserAddEvent():
         assert(debugLog("server event: realm_user/add"));
-        users[event.person.userId] = event.person;
+        _users.handleRealmUserEvent(event);
         notifyListeners();
 
       case RealmUserRemoveEvent():
         assert(debugLog("server event: realm_user/remove"));
-        users.remove(event.userId);
+        _users.handleRealmUserEvent(event);
         autocompleteViewManager.handleRealmUserRemoveEvent(event);
         notifyListeners();
 
       case RealmUserUpdateEvent():
         assert(debugLog("server event: realm_user/update"));
-        final user = users[event.userId];
-        if (user == null) {
-          return; // TODO log
-        }
-        if (event.fullName != null)       user.fullName       = event.fullName!;
-        if (event.avatarUrl != null)      user.avatarUrl      = event.avatarUrl!;
-        if (event.avatarVersion != null)  user.avatarVersion  = event.avatarVersion!;
-        if (event.timezone != null)       user.timezone       = event.timezone!;
-        if (event.botOwnerId != null)     user.botOwnerId     = event.botOwnerId!;
-        if (event.role != null)           user.role           = event.role!;
-        if (event.isBillingAdmin != null) user.isBillingAdmin = event.isBillingAdmin!;
-        if (event.deliveryEmail != null)  user.deliveryEmail  = event.deliveryEmail!.value;
-        if (event.newEmail != null)       user.email          = event.newEmail!;
-        if (event.isActive != null)       user.isActive       = event.isActive!;
-        if (event.customProfileField != null) {
-          final profileData = (user.profileData ??= {});
-          final update = event.customProfileField!;
-          if (update.value != null) {
-            profileData[update.id] = ProfileFieldUserData(value: update.value!, renderedValue: update.renderedValue);
-          } else {
-            profileData.remove(update.id);
-          }
-          if (profileData.isEmpty) {
-            // null is equivalent to `{}` for efficiency; see [User._readProfileData].
-            user.profileData = null;
-          }
-        }
+        _users.handleRealmUserEvent(event);
         autocompleteViewManager.handleRealmUserUpdateEvent(event);
+        notifyListeners();
+
+      case SavedSnippetsEvent():
+        assert(debugLog('server event: saved_snippets/${event.op}'));
+        _savedSnippets.handleSavedSnippetsEvent(event);
         notifyListeners();
 
       case ChannelEvent():
@@ -694,25 +973,22 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
         assert(debugLog("server event: typing/${event.op} ${event.messageType}"));
         typingStatus.handleTypingEvent(event);
 
+      case PresenceEvent():
+        // TODO handle
+        break;
+
       case ReactionEvent():
         assert(debugLog("server event: reaction/${event.op}"));
         _messages.handleReactionEvent(event);
 
+      case MutedUsersEvent():
+        assert(debugLog("server event: muted_users"));
+        _users.handleMutedUsersEvent(event);
+        notifyListeners();
+
       case UnexpectedEvent():
         assert(debugLog("server event: ${jsonEncode(event.toJson())}")); // TODO log better
     }
-  }
-
-  Future<void> sendMessage({required MessageDestination destination, required String content}) {
-    assert(!_disposed);
-
-    // TODO implement outbox; see design at
-    //   https://chat.zulip.org/#narrow/stream/243-mobile-team/topic/.23M3881.20Sending.20outbox.20messages.20is.20fraught.20with.20issues/near/1405739
-    return _apiSendMessage(connection,
-      destination: destination,
-      content: content,
-      readBySender: true,
-    );
   }
 
   static List<CustomProfileField> _sortCustomProfileFields(List<CustomProfileField> initialCustomProfileFields) {
@@ -734,15 +1010,32 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, ChannelStore, Mess
   String toString() => '${objectRuntimeType(this, 'PerAccountStore')}#${shortHash(this)}';
 }
 
-const _apiSendMessage = sendMessage; // Bit ugly; for alternatives, see: https://chat.zulip.org/#narrow/stream/243-mobile-team/topic/flutter.3A.20PerAccountStore.20methods/near/1545809
-const _tryResolveUrl = tryResolveUrl;
+/// A [GlobalStoreBackend] that uses a live, persistent local database.
+///
+/// Used as part of a [LiveGlobalStore].
+/// The underlying data store is an [AppDatabase] corresponding to a
+/// SQLite database file in the app's persistent storage on the device.
+class LiveGlobalStoreBackend implements GlobalStoreBackend {
+  LiveGlobalStoreBackend._({required AppDatabase db}) : _db = db;
 
-/// Like [Uri.resolve], but on failure return null instead of throwing.
-Uri? tryResolveUrl(Uri baseUrl, String reference) {
-  try {
-    return baseUrl.resolve(reference);
-  } on FormatException {
-    return null;
+  final AppDatabase _db;
+
+  @override
+  Future<void> doUpdateGlobalSettings(GlobalSettingsCompanion data) async {
+    final rowsAffected = await _db.update(_db.globalSettings).write(data);
+    assert(rowsAffected == 1);
+  }
+
+  @override
+  Future<void> doSetBoolGlobalSetting(BoolGlobalSetting setting, bool? value) async {
+    if (value == null) {
+      final query = _db.delete(_db.boolGlobalSettings)
+        ..where((r) => r.name.equals(setting.name));
+      await query.go();
+    } else {
+      await _db.into(_db.boolGlobalSettings).insertOnConflictUpdate(
+        BoolGlobalSettingRow(name: setting.name, value: value));
+    }
   }
 }
 
@@ -755,9 +1048,12 @@ Uri? tryResolveUrl(Uri baseUrl, String reference) {
 /// and will have an associated [UpdateMachine].
 class LiveGlobalStore extends GlobalStore {
   LiveGlobalStore._({
-    required AppDatabase db,
+    required LiveGlobalStoreBackend backend,
+    required super.globalSettings,
+    required super.boolGlobalSettings,
     required super.accounts,
-  }) : _db = db;
+  }) : _backend = backend,
+       super(backend: backend);
 
   @override
   ApiConnection apiConnection({
@@ -771,9 +1067,35 @@ class LiveGlobalStore extends GlobalStore {
   // We keep the API simple and synchronous for the bulk of the app's code
   // by doing this loading up front before constructing a [GlobalStore].
   static Future<GlobalStore> load() async {
+    // Loading this data takes roughly 80-100ms (measured on a Pixel 8).
+    // That's only a small increment on the time spent loading server data,
+    // so we don't worry about optimizing it further.
+    // In a future where we keep server data locally between runs (#477) --
+    // which will also mean having much more data to load from the database --
+    // we'd invest in this area more.  For example we'd try doing these
+    // in parallel, or deferring some to be concurrent with loading server data.
+    final stopwatch = Stopwatch()..start();
     final db = AppDatabase(NativeDatabase.createInBackground(await _dbFile()));
+    final t1 = stopwatch.elapsed;
+    final globalSettings = await db.getGlobalSettings();
+    final t2 = stopwatch.elapsed;
+    final boolGlobalSettings = await db.getBoolGlobalSettings();
+    final t3 = stopwatch.elapsed;
     final accounts = await db.select(db.accounts).get();
-    return LiveGlobalStore._(db: db, accounts: accounts);
+    final t4 = stopwatch.elapsed;
+    if (kProfileMode) {
+      String format(Duration d) =>
+        "${(d.inMicroseconds / 1000.0).toStringAsFixed(1)}ms";
+      profilePrint("db load time ${format(t4)} total: ${format(t1)} init, "
+        "${format(t2 - t1)} settings, ${format(t3 - t2)} bool-settings, "
+        "${format(t4 - t3)} accounts");
+    }
+
+    return LiveGlobalStore._(
+      backend: LiveGlobalStoreBackend._(db: db),
+      globalSettings: globalSettings,
+      boolGlobalSettings: boolGlobalSettings,
+      accounts: accounts);
   }
 
   /// The file path to use for the app database.
@@ -781,7 +1103,7 @@ class LiveGlobalStore extends GlobalStore {
     // What directory should we use?
     //   path_provider's getApplicationSupportDirectory:
     //     on Android, -> Flutter's PathUtils.getFilesDir -> https://developer.android.com/reference/android/content/Context#getFilesDir()
-    //       -> empirically /data/data/com.zulip.flutter/files/
+    //       -> empirically /data/data/com.zulipmobile/files/
     //     on iOS, -> "Library/Application Support" via https://developer.apple.com/documentation/foundation/nssearchpathdirectory/nsapplicationsupportdirectory
     //     on Linux, -> "${XDG_DATA_HOME:-~/.local/share}/com.zulip.flutter/"
     //     All seem reasonable.
@@ -795,7 +1117,13 @@ class LiveGlobalStore extends GlobalStore {
     return File(p.join(dir.path, 'zulip.db'));
   }
 
-  final AppDatabase _db;
+  final LiveGlobalStoreBackend _backend;
+
+  // The methods that use this should probably all move to [GlobalStoreBackend]
+  // and [LiveGlobalStoreBackend] anyway (see comment on the former);
+  // so let the latter be the canonical home of the [AppDatabase].
+  // This getter just simplifies the transition.
+  AppDatabase get _db => _backend._db;
 
   @override
   Future<PerAccountStore> doLoadPerAccount(int accountId) async {
@@ -841,36 +1169,56 @@ class UpdateMachine {
   UpdateMachine.fromInitialSnapshot({
     required this.store,
     required InitialSnapshot initialSnapshot,
-  }) : queueId = initialSnapshot.queueId ?? (() {
-         // The queueId is optional in the type, but should only be missing in the
-         // case of unauthenticated access to a web-public realm.  We authenticated.
-         throw Exception("bad initial snapshot: missing queueId");
-       })(),
-       lastEventId = initialSnapshot.lastEventId {
+  }) : lastEventId = initialSnapshot.lastEventId {
     store.updateMachine = this;
   }
 
-  /// Load the user's data from the server, and start an event queue going.
+  /// Load data for the given account from the server,
+  /// and start an event queue going.
+  ///
+  /// The account for `accountId` must exist.
+  ///
+  /// Throws [AccountNotFoundException] if after any async gap
+  /// the account has been removed.
   ///
   /// In the future this might load an old snapshot from local storage first.
   static Future<UpdateMachine> load(GlobalStore globalStore, int accountId) async {
-    Account account = globalStore.getAccount(accountId)!;
-    final connection = globalStore.apiConnectionFromAccount(account);
+    final connection = globalStore.apiConnectionFromAccount(
+      globalStore.getAccount(accountId)!);
+
+    void stopAndThrowIfNoAccount() {
+      final account = globalStore.getAccount(accountId);
+      if (account == null) {
+        assert(debugLog('Account logged out during UpdateMachine.load'));
+        connection.close();
+        throw AccountNotFoundException();
+      }
+    }
 
     final stopwatch = Stopwatch()..start();
-    final initialSnapshot = await _registerQueueWithRetry(connection);
-    final t = (stopwatch..stop()).elapsed;
-    assert(debugLog("initial fetch time: ${t.inMilliseconds}ms"));
+    InitialSnapshot? initialSnapshot;
+    try {
+      initialSnapshot = await _registerQueueWithRetry(connection,
+        stopAndThrowIfNoAccount: stopAndThrowIfNoAccount);
+    } on _ServerVersionUnsupportedException catch (e) {
+      // `!` is OK because _registerQueueWithRetry would have thrown a
+      // not-_ServerVersionUnsupportedException if no account
+      final account = globalStore.getAccount(accountId)!;
+      if (!e.data.matchesAccount(account)) {
+        await globalStore.updateZulipVersionData(accountId, e.data);
+      }
+      connection.close();
+      rethrow;
+    }
+    if (kProfileMode) {
+      profilePrint("initial fetch time: ${stopwatch.elapsed.inMilliseconds}ms");
+    }
 
-    if (initialSnapshot.zulipVersion != account.zulipVersion
-        || initialSnapshot.zulipMergeBase != account.zulipMergeBase
-        || initialSnapshot.zulipFeatureLevel != account.zulipFeatureLevel) {
-      account = await globalStore.updateAccount(accountId, AccountsCompanion(
-        zulipVersion: Value(initialSnapshot.zulipVersion),
-        zulipMergeBase: Value(initialSnapshot.zulipMergeBase),
-        zulipFeatureLevel: Value(initialSnapshot.zulipFeatureLevel),
-      ));
-      connection.zulipFeatureLevel = initialSnapshot.zulipFeatureLevel;
+    final zulipVersionData = ZulipVersionData.fromInitialSnapshot(initialSnapshot);
+    // `!` is OK because _registerQueueWithRetry would have thrown if no account
+    if (!zulipVersionData.matchesAccount(globalStore.getAccount(accountId)!)) {
+      await globalStore.updateZulipVersionData(accountId, zulipVersionData);
+      connection.zulipFeatureLevel = zulipVersionData.zulipFeatureLevel;
     }
 
     final store = PerAccountStore.fromInitialSnapshot(
@@ -891,30 +1239,58 @@ class UpdateMachine {
     // TODO do registerNotificationToken before registerQueue:
     //   https://github.com/zulip/zulip-flutter/pull/325#discussion_r1365982807
     unawaited(updateMachine.registerNotificationToken());
+    store.presence.start();
     return updateMachine;
   }
 
   final PerAccountStore store;
-  final String queueId;
   int lastEventId;
 
   bool _disposed = false;
 
+  /// Make the register-queue request, with retries.
+  ///
+  /// After each async gap, calls [stopAndThrowIfNoAccount].
   static Future<InitialSnapshot> _registerQueueWithRetry(
-      ApiConnection connection) async {
+    ApiConnection connection, {
+    required void Function() stopAndThrowIfNoAccount,
+  }) async {
     BackoffMachine? backoffMachine;
     while (true) {
+      InitialSnapshot? result;
       try {
-        return await registerQueue(connection);
+        result = await registerQueue(connection);
       } catch (e, s) {
-        assert(debugLog('Error fetching initial snapshot: $e'));
-        // Print stack trace in its own log entry; log entries are truncated
-        // at 1 kiB (at least on Android), and stack can be longer than that.
-        assert(debugLog('Stack:\n$s'));
+        stopAndThrowIfNoAccount();
+        // TODO(#890): tell user if initial-fetch errors persist, or look non-transient
+        final ZulipVersionData? zulipVersionData;
+        switch (e) {
+          case MalformedServerResponseException()
+            when (zulipVersionData = ZulipVersionData.fromMalformedServerResponseException(e))
+              ?.isUnsupported == true:
+            throw _ServerVersionUnsupportedException(zulipVersionData!);
+          case HttpException(httpStatus: 401):
+            // We cannot recover from this error through retrying.
+            // Leave it to [GlobalStore.loadPerAccount].
+            rethrow;
+          default:
+            assert(debugLog('Error fetching initial snapshot: $e'));
+            // Print stack trace in its own log entry; log entries are truncated
+            // at 1 kiB (at least on Android), and stack can be longer than that.
+            assert(debugLog('Stack:\n$s'));
+        }
         assert(debugLog('Backing off, then will retry…'));
-        // TODO tell user if initial-fetch errors persist, or look non-transient
         await (backoffMachine ??= BackoffMachine()).wait();
+        stopAndThrowIfNoAccount();
         assert(debugLog('… Backoff wait complete, retrying initial fetch.'));
+      }
+      if (result != null) {
+        stopAndThrowIfNoAccount();
+        final zulipVersionData = ZulipVersionData.fromInitialSnapshot(result);
+        if (zulipVersionData.isUnsupported) {
+          throw _ServerVersionUnsupportedException(zulipVersionData);
+        }
+        return result;
       }
     }
   }
@@ -1017,7 +1393,7 @@ class UpdateMachine {
         final GetEventsResult result;
         try {
           result = await getEvents(store.connection,
-            queueId: queueId, lastEventId: lastEventId);
+            queueId: store.queueId, lastEventId: lastEventId);
           if (_disposed) return;
         } catch (e, stackTrace) {
           if (_disposed) return;
@@ -1128,8 +1504,7 @@ class UpdateMachine {
       case Server5xxException():
         shouldReportToUser = true;
 
-      case ServerException(httpStatus: 429):
-      case ZulipApiException(httpStatus: 429):
+      case HttpException(httpStatus: 429):
       case ZulipApiException(code: 'RATE_LIMIT_HIT'):
         // TODO(#946) handle rate-limit errors more generally, in ApiConnection
         shouldReportToUser = true;
@@ -1172,6 +1547,7 @@ class UpdateMachine {
     store.isLoading = true;
 
     bool isUnexpected;
+    // TODO(#1054): handle auth failure
     switch (error) {
       case ZulipApiException(code: 'BAD_EVENT_QUEUE_ID'):
         assert(debugLog('Lost event queue for $store.  Replacing…'));
@@ -1213,8 +1589,14 @@ class UpdateMachine {
       if (_disposed) return;
     }
 
-    await store._globalStore._reloadPerAccount(store.accountId);
-    assert(_disposed);
+    try {
+      await store._globalStore._reloadPerAccount(store.accountId);
+    } on AccountNotFoundException {
+      assert(debugLog('… Event queue not replaced; account was logged out.'));
+      return;
+    } finally {
+      assert(_disposed);
+    }
     assert(debugLog('… Event queue replaced.'));
   }
 
@@ -1313,6 +1695,58 @@ class UpdateMachine {
 
   @override
   String toString() => '${objectRuntimeType(this, 'UpdateMachine')}#${shortHash(this)}';
+}
+
+/// The fields 'zulip_version', 'zulip_merge_base', and 'zulip_feature_level'
+/// from a /register response.
+class ZulipVersionData {
+  const ZulipVersionData({
+    required this.zulipVersion,
+    required this.zulipMergeBase,
+    required this.zulipFeatureLevel,
+  });
+
+  factory ZulipVersionData.fromInitialSnapshot(InitialSnapshot initialSnapshot) =>
+    ZulipVersionData(
+      zulipVersion: initialSnapshot.zulipVersion,
+      zulipMergeBase: initialSnapshot.zulipMergeBase,
+      zulipFeatureLevel: initialSnapshot.zulipFeatureLevel);
+
+  /// Make a [ZulipVersionData] from a [MalformedServerResponseException],
+  /// if the body was readable/valid JSON and contained the data, else null.
+  ///
+  /// If there's a zulip_version but no zulip_feature_level,
+  /// we infer it's indeed a Zulip server,
+  /// just an ancient one before feature levels were introduced in Zulip 3.0,
+  /// and we set 0 for zulipFeatureLevel.
+  static ZulipVersionData? fromMalformedServerResponseException(MalformedServerResponseException e) {
+    try {
+      final data = e.data!;
+      return ZulipVersionData(
+        zulipVersion: data['zulip_version'] as String,
+        zulipMergeBase: data['zulip_merge_base'] as String?,
+        zulipFeatureLevel: data['zulip_feature_level'] as int? ?? 0);
+    } catch (inner) {
+      return null;
+    }
+  }
+
+  final String zulipVersion;
+  final String? zulipMergeBase;
+  final int zulipFeatureLevel;
+
+  bool matchesAccount(Account account) =>
+    zulipVersion == account.zulipVersion
+    && zulipMergeBase == account.zulipMergeBase
+    && zulipFeatureLevel == account.zulipFeatureLevel;
+
+  bool get isUnsupported => zulipFeatureLevel < kMinSupportedZulipFeatureLevel;
+}
+
+class _ServerVersionUnsupportedException implements Exception {
+  final ZulipVersionData data;
+
+  _ServerVersionUnsupportedException(this.data);
 }
 
 class _EventHandlingException implements Exception {

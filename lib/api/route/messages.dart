@@ -16,6 +16,7 @@ part 'messages.g.dart';
 Future<Message?> getMessageCompat(ApiConnection connection, {
   required int messageId,
   bool? applyMarkdown,
+  required bool allowEmptyTopicName,
 }) async {
   final useLegacyApi = connection.zulipFeatureLevel! < 120;
   if (useLegacyApi) {
@@ -25,6 +26,7 @@ Future<Message?> getMessageCompat(ApiConnection connection, {
       numBefore: 0,
       numAfter: 0,
       applyMarkdown: applyMarkdown,
+      allowEmptyTopicName: allowEmptyTopicName,
 
       // Hard-code this param to `true`, as the new single-message API
       // effectively does:
@@ -37,6 +39,7 @@ Future<Message?> getMessageCompat(ApiConnection connection, {
       final response = await getMessage(connection,
         messageId: messageId,
         applyMarkdown: applyMarkdown,
+        allowEmptyTopicName: allowEmptyTopicName,
       );
       return response.message;
     } on ZulipApiException catch (e) {
@@ -57,16 +60,20 @@ Future<Message?> getMessageCompat(ApiConnection connection, {
 Future<GetMessageResult> getMessage(ApiConnection connection, {
   required int messageId,
   bool? applyMarkdown,
+  required bool allowEmptyTopicName,
 }) {
+  assert(allowEmptyTopicName, '`allowEmptyTopicName` should only be true');
   assert(connection.zulipFeatureLevel! >= 120);
   return connection.get('getMessage', GetMessageResult.fromJson, 'messages/$messageId', {
     if (applyMarkdown != null) 'apply_markdown': applyMarkdown,
+    'allow_empty_topic_name': allowEmptyTopicName,
   });
 }
 
 @JsonSerializable(fieldRename: FieldRename.snake)
 class GetMessageResult {
   // final String rawContent; // deprecated; ignore
+  @JsonKey(fromJson: Message.fromJson)
   final Message message;
 
   GetMessageResult({
@@ -88,16 +95,19 @@ Future<GetMessagesResult> getMessages(ApiConnection connection, {
   required int numAfter,
   bool? clientGravatar,
   bool? applyMarkdown,
+  required bool allowEmptyTopicName,
   // bool? useFirstUnreadAnchor // omitted because deprecated
 }) {
+  assert(allowEmptyTopicName, '`allowEmptyTopicName` should only be true');
   return connection.get('getMessages', GetMessagesResult.fromJson, 'messages', {
-    'narrow': resolveDmElements(narrow, connection.zulipFeatureLevel!),
+    'narrow': resolveApiNarrowForServer(narrow, connection.zulipFeatureLevel!),
     'anchor': RawParameter(anchor.toJson()),
     if (includeAnchor != null) 'include_anchor': includeAnchor,
     'num_before': numBefore,
     'num_after': numAfter,
     if (clientGravatar != null) 'client_gravatar': clientGravatar,
     if (applyMarkdown != null) 'apply_markdown': applyMarkdown,
+    'allow_empty_topic_name': allowEmptyTopicName,
   });
 }
 
@@ -138,6 +148,7 @@ class GetMessagesResult {
   final bool foundOldest;
   final bool foundAnchor;
   final bool historyLimited;
+  @JsonKey(fromJson: _messagesFromJson)
   final List<Message> messages;
 
   GetMessagesResult({
@@ -149,6 +160,12 @@ class GetMessagesResult {
     required this.messages,
   });
 
+  static List<Message> _messagesFromJson(Object json) {
+    return (json as List<dynamic>)
+      .map((e) => Message.fromJson(e as Map<String, dynamic>))
+      .toList();
+  }
+
   factory GetMessagesResult.fromJson(Map<String, dynamic> json) =>
       _$GetMessagesResultFromJson(json);
 
@@ -156,19 +173,10 @@ class GetMessagesResult {
 }
 
 // https://zulip.com/api/send-message#parameter-topic
-const int kMaxTopicLength = 60;
+const int kMaxTopicLengthCodePoints = 60;
 
 // https://zulip.com/api/send-message#parameter-content
 const int kMaxMessageLengthCodePoints = 10000;
-
-/// The topic servers understand to mean "there is no topic".
-///
-/// This should match
-///   https://github.com/zulip/zulip/blob/6.0/zerver/actions/message_edit.py#L940
-/// or similar logic at the latest `main`.
-// This is hardcoded in the server, and therefore untranslated; that's
-// zulip/zulip#3639.
-const String kNoTopicTopic = '(no topic)';
 
 /// https://zulip.com/api/send-message
 Future<SendMessageResult> sendMessage(
@@ -186,15 +194,15 @@ Future<SendMessageResult> sendMessage(
       StreamDestination() => {
         'type': RawParameter('stream'),
         'to': destination.streamId,
-        'topic': RawParameter(destination.topic),
+        'topic': RawParameter(destination.topic.apiName),
       },
       DmDestination() => {
         'type': supportsTypeDirect ? RawParameter('direct') : RawParameter('private'),
         'to': destination.userIds,
       }}),
     'content': RawParameter(content),
-    if (queueId != null) 'queue_id': queueId, // TODO should this use RawParameter?
-    if (localId != null) 'local_id': localId, // TODO should this use RawParameter?
+    if (queueId != null) 'queue_id': RawParameter(queueId),
+    if (localId != null) 'local_id': RawParameter(localId),
     if (readBySender != null) 'read_by_sender': readBySender,
   },
   overrideUserAgent: switch ((supportsReadBySender, readBySender)) {
@@ -231,7 +239,7 @@ class StreamDestination extends MessageDestination {
   const StreamDestination(this.streamId, this.topic);
 
   final int streamId;
-  final String topic;
+  final TopicName topic;
 }
 
 /// A DM conversation, for specifying to [sendMessage].
@@ -256,6 +264,41 @@ class SendMessageResult {
     _$SendMessageResultFromJson(json);
 
   Map<String, dynamic> toJson() => _$SendMessageResultToJson(this);
+}
+
+/// https://zulip.com/api/update-message
+Future<UpdateMessageResult> updateMessage(
+  ApiConnection connection, {
+  required int messageId,
+  TopicName? topic,
+  PropagateMode? propagateMode,
+  bool? sendNotificationToOldThread,
+  bool? sendNotificationToNewThread,
+  String? content,
+  String? prevContentSha256,
+  int? streamId,
+}) {
+  return connection.patch('updateMessage', UpdateMessageResult.fromJson, 'messages/$messageId', {
+    if (topic != null) 'topic': RawParameter(topic.apiName),
+    if (propagateMode != null) 'propagate_mode': RawParameter(propagateMode.toJson()),
+    if (sendNotificationToOldThread != null) 'send_notification_to_old_thread': sendNotificationToOldThread,
+    if (sendNotificationToNewThread != null) 'send_notification_to_new_thread': sendNotificationToNewThread,
+    if (content != null) 'content': RawParameter(content),
+    if (prevContentSha256 != null) 'prev_content_sha256': RawParameter(prevContentSha256),
+    if (streamId != null) 'stream_id': streamId,
+  });
+}
+
+@JsonSerializable(fieldRename: FieldRename.snake)
+class UpdateMessageResult {
+  // final List<DetachedUpload> detachedUploads; // TODO handle
+
+  UpdateMessageResult();
+
+  factory UpdateMessageResult.fromJson(Map<String, dynamic> json) =>
+    _$UpdateMessageResultFromJson(json);
+
+  Map<String, dynamic> toJson() => _$UpdateMessageResultToJson(this);
 }
 
 /// https://zulip.com/api/upload-file
@@ -349,9 +392,6 @@ class UpdateMessageFlagsResult {
 }
 
 /// https://zulip.com/api/update-message-flags-for-narrow
-///
-/// This binding only supports feature levels 155+.
-// TODO(server-6) remove FL 155+ mention in doc, and the related `assert`
 Future<UpdateMessageFlagsForNarrowResult> updateMessageFlagsForNarrow(ApiConnection connection, {
   required Anchor anchor,
   bool? includeAnchor,
@@ -361,13 +401,12 @@ Future<UpdateMessageFlagsForNarrowResult> updateMessageFlagsForNarrow(ApiConnect
   required UpdateMessageFlagsOp op,
   required MessageFlag flag,
 }) {
-  assert(connection.zulipFeatureLevel! >= 155);
   return connection.post('updateMessageFlagsForNarrow', UpdateMessageFlagsForNarrowResult.fromJson, 'messages/flags/narrow', {
     'anchor': RawParameter(anchor.toJson()),
     if (includeAnchor != null) 'include_anchor': includeAnchor,
     'num_before': numBefore,
     'num_after': numAfter,
-    'narrow': resolveDmElements(narrow, connection.zulipFeatureLevel!),
+    'narrow': resolveApiNarrowForServer(narrow, connection.zulipFeatureLevel!),
     'op': RawParameter(op.toJson()),
     'flag': RawParameter(flag.toJson()),
   });
@@ -395,64 +434,4 @@ class UpdateMessageFlagsForNarrowResult {
     _$UpdateMessageFlagsForNarrowResultFromJson(json);
 
   Map<String, dynamic> toJson() => _$UpdateMessageFlagsForNarrowResultToJson(this);
-}
-
-/// https://zulip.com/api/mark-all-as-read
-///
-/// This binding is deprecated, in FL 155+ use
-/// [updateMessageFlagsForNarrow] instead.
-// TODO(server-6): Remove as deprecated by updateMessageFlagsForNarrow
-//
-// For FL < 153 this call was atomic on the server and would
-// not mark any messages as read if it timed out.
-// From FL 153 and onward the server started processing
-// in batches so progress could still be made in the event
-// of a timeout interruption. Thus, in FL 153 this call
-// started returning `result: partially_completed` and
-// `code: REQUEST_TIMEOUT` for timeouts.
-//
-// In FL 211 the `partially_completed` variant of
-// `result` was removed, the string `code` field also
-// removed, and a boolean `complete` field introduced.
-//
-// For full support of this endpoint we would need three
-// variants of the return structure based on feature
-// level (`{}`, `{code: string}`, and `{complete: bool}`)
-// as well as handling of `partially_completed` variant
-// of `result` in `lib/api/core.dart`. For simplicity we
-// ignore these return values.
-//
-// We don't use this method for FL 155+ (it is replaced
-// by `updateMessageFlagsForNarrow`) so there are only
-// two versions (FL 153 and FL 154) affected.
-Future<void> markAllAsRead(ApiConnection connection) {
-  return connection.post('markAllAsRead', (_) {}, 'mark_all_as_read', {});
-}
-
-/// https://zulip.com/api/mark-stream-as-read
-///
-/// This binding is deprecated, in FL 155+ use
-/// [updateMessageFlagsForNarrow] instead.
-// TODO(server-6): Remove as deprecated by updateMessageFlagsForNarrow
-Future<void> markStreamAsRead(ApiConnection connection, {
-  required int streamId,
-}) {
-  return connection.post('markStreamAsRead', (_) {}, 'mark_stream_as_read', {
-    'stream_id': streamId,
-  });
-}
-
-/// https://zulip.com/api/mark-topic-as-read
-///
-/// This binding is deprecated, in FL 155+ use
-/// [updateMessageFlagsForNarrow] instead.
-// TODO(server-6): Remove as deprecated by updateMessageFlagsForNarrow
-Future<void> markTopicAsRead(ApiConnection connection, {
-  required int streamId,
-  required String topicName,
-}) {
-  return connection.post('markTopicAsRead', (_) {}, 'mark_topic_as_read', {
-    'stream_id': streamId,
-    'topic_name': RawParameter(topicName),
-  });
 }

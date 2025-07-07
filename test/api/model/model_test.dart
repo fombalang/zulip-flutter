@@ -89,14 +89,8 @@ void main() {
       check(baseStreamJson()).not((it) => it.containsKey('topic'));
       check(Message.fromJson(baseStreamJson()
         ..['subject'] = 'hello'
-      )).topic.equals('hello');
-    });
-
-    test('match_subject -> matchTopic', () {
-      check(baseStreamJson()).not((it) => it.containsKey('match_topic'));
-      check(Message.fromJson(baseStreamJson()
-        ..['match_subject'] = 'yo'
-      )).matchTopic.equals('yo');
+      )).isA<StreamMessage>()
+        .topic.equals(const TopicName('hello'));
     });
 
     test('no crash on unrecognized flag', () {
@@ -125,6 +119,68 @@ void main() {
     // MessageEditState group.
   });
 
+  group('TopicName', () {
+    test('unresolve', () {
+      void doCheck(TopicName input, TopicName expected) {
+        final output = input.unresolve();
+        check(output).apiName.equals(expected.apiName);
+      }
+
+      doCheck(eg.t('some topic'),       eg.t('some topic'));
+      doCheck(eg.t('Some Topic'),       eg.t('Some Topic'));
+      doCheck(eg.t('✔ some topic'),     eg.t('some topic'));
+      doCheck(eg.t('✔ Some Topic'),     eg.t('Some Topic'));
+
+      doCheck(eg.t('Some ✔ Topic'),     eg.t('Some ✔ Topic'));
+      doCheck(eg.t('✔ Some ✔ Topic'),   eg.t('Some ✔ Topic'));
+
+      doCheck(eg.t('✔ ✔✔✔ some topic'), eg.t('some topic'));
+      doCheck(eg.t('✔ ✔ ✔✔some topic'), eg.t('some topic'));
+    });
+
+    test('isSameAs', () {
+      void doCheck(TopicName topicA, TopicName topicB, bool expected) {
+        check(topicA.isSameAs(topicB)).equals(expected);
+      }
+
+      doCheck(eg.t('some topic'),   eg.t('some topic'),   true);
+      doCheck(eg.t('SOME TOPIC'),   eg.t('SOME TOPIC'),   true);
+      doCheck(eg.t('Some Topic'),   eg.t('sOME tOPIC'),   true);
+      doCheck(eg.t('✔ a'),          eg.t('✔ a'),          true);
+
+      doCheck(eg.t('✔ some topic'), eg.t('some topic'),   false);
+      doCheck(eg.t('SOME TOPIC'),   eg.t('✔ SOME TOPIC'), false);
+      doCheck(eg.t('✔ Some Topic'), eg.t('sOME tOPIC'),   false);
+
+      doCheck(eg.t('✔ a'),          eg.t('✔ b'),          false);
+    });
+
+    test('processLikeServer', () {
+      final emptyTopicDisplayName = eg.defaultRealmEmptyTopicDisplayName;
+      void doCheck(TopicName topic, TopicName expected, int zulipFeatureLevel) {
+        check(topic.processLikeServer(
+          zulipFeatureLevel: zulipFeatureLevel,
+          realmEmptyTopicDisplayName: emptyTopicDisplayName),
+        ).equals(expected);
+      }
+
+      check(() => eg.t('').processLikeServer(
+        zulipFeatureLevel: 333,
+        realmEmptyTopicDisplayName: emptyTopicDisplayName),
+      ).throws<void>();
+      doCheck(eg.t('(no topic)'),          eg.t('(no topic)'),          333);
+      doCheck(eg.t(emptyTopicDisplayName), eg.t(emptyTopicDisplayName), 333);
+      doCheck(eg.t('other topic'),         eg.t('other topic'),         333);
+
+      doCheck(eg.t(''),                    eg.t(''),                    334);
+      doCheck(eg.t('(no topic)'),          eg.t('(no topic)'),          334);
+      doCheck(eg.t(emptyTopicDisplayName), eg.t(''),                    334);
+      doCheck(eg.t('other topic'),         eg.t('other topic'),         334);
+
+      doCheck(eg.t('(no topic)'),          eg.t(''),                    370);
+    });
+  });
+
   group('DmMessage', () {
     final Map<String, dynamic> baseJson = Map.unmodifiable(deepToJson(
       eg.dmMessage(from: eg.otherUser, to: [eg.selfUser]),
@@ -134,9 +190,9 @@ void main() {
       return DmMessage.fromJson({ ...baseJson, ...specialJson });
     }
 
-    Iterable<DmRecipient> asRecipients(Iterable<User> users) {
+    List<Map<String, dynamic>> asRecipients(Iterable<User> users) {
       return users.map((u) =>
-        DmRecipient(id: u.userId, email: u.email, fullName: u.fullName));
+        {'id': u.userId, 'email': u.email, 'full_name': u.fullName}).toList();
     }
 
     Map<String, dynamic> withRecipients(Iterable<User> recipients) {
@@ -145,30 +201,13 @@ void main() {
         'sender_id': from.userId,
         'sender_email': from.email,
         'sender_full_name': from.fullName,
-        'display_recipient': asRecipients(recipients).map((r) => r.toJson()).toList(),
+        'display_recipient': asRecipients(recipients),
       };
     }
 
     User user2 = eg.user(userId: 2);
     User user3 = eg.user(userId: 3);
     User user11 = eg.user(userId: 11);
-
-    test('displayRecipient', () {
-      check(parse(withRecipients([user2])).displayRecipient)
-        .deepEquals(asRecipients([user2]));
-
-      check(parse(withRecipients([user2, user3])).displayRecipient)
-        .deepEquals(asRecipients([user2, user3]));
-      check(parse(withRecipients([user3, user2])).displayRecipient)
-        .deepEquals(asRecipients([user2, user3]));
-
-      check(parse(withRecipients([user2, user3, user11])).displayRecipient)
-        .deepEquals(asRecipients([user2, user3, user11]));
-      check(parse(withRecipients([user3, user11, user2])).displayRecipient)
-        .deepEquals(asRecipients([user2, user3, user11]));
-      check(parse(withRecipients([user11, user2, user3])).displayRecipient)
-        .deepEquals(asRecipients([user2, user3, user11]));
-    });
 
     test('allRecipientIds', () {
       check(parse(withRecipients([user2])).allRecipientIds)
@@ -287,9 +326,34 @@ void main() {
         ]);
       });
 
+      // Technically the topic *was* unresolved, so MessageEditState.none
+      // would be valid and preferable -- if it didn't need more intense
+      // computation than we're comfortable with in a hot codepath, i.e.,
+      // a regex test instead of a simple `startsWith` / `substring` check.
+      // See comment on the implementation, and discussion:
+      //   https://github.com/zulip/zulip-flutter/pull/1242#discussion_r1917592157
       test('Unresolving topic with a weird prefix -> moved', () {
           checkEditState(MessageEditState.moved,
             [{'prev_topic': '✔ ✔old_topic', 'topic': 'old_topic'}]);
+      });
+
+      // Similar reasoning as in the previous test.
+      // Also, Zulip doesn't produce topics with a weird resolved-topic prefix,
+      // so this case can only be produced by unusual input in an
+      // edit/move-topic UI. A "moved" marker seems like a fine response
+      // in that circumstance.
+      test('Resolving topic with a weird prefix -> moved', () {
+          checkEditState(MessageEditState.moved,
+            [{'prev_topic': 'old_topic', 'topic': '✔ ✔old_topic'}]);
+      });
+
+      // Similar reasoning as the previous test, including that this case had to
+      // involve unusual input in an edit/move-topic UI.
+      // Here the computation burden would have come from calling
+      // [TopicName.canonicalize].
+      test('Topic was resolved but with changed case -> moved', () {
+        checkEditState(MessageEditState.moved,
+          [{'prev_topic': 'old ToPiC', 'topic': '✔ OLD tOpIc'}]);
       });
     });
   });

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:zulip/api/core.dart';
+import 'package:zulip/api/exception.dart';
 import 'package:zulip/api/model/events.dart';
 import 'package:zulip/api/model/initial_snapshot.dart';
 import 'package:zulip/api/model/model.dart';
@@ -8,7 +10,11 @@ import 'package:zulip/api/model/submessage.dart';
 import 'package:zulip/api/route/messages.dart';
 import 'package:zulip/api/route/realm.dart';
 import 'package:zulip/api/route/channels.dart';
+import 'package:zulip/model/binding.dart';
+import 'package:zulip/model/database.dart';
+import 'package:zulip/model/message.dart';
 import 'package:zulip/model/narrow.dart';
+import 'package:zulip/model/settings.dart';
 import 'package:zulip/model/store.dart';
 
 import 'model/test_store.dart';
@@ -18,8 +24,64 @@ void _checkPositive(int? value, String description) {
   assert(value == null || value > 0, '$description should be positive');
 }
 
+////////////////////////////////////////////////////////////////
+// Error objects.
+//
+
 Object nullCheckError() {
   try { null!; } catch (e) { return e; } // ignore: null_check_always_fails
+}
+
+/// A Zulip API error with the generic "BAD_REQUEST" error code.
+///
+/// The server returns this error code for a wide range of error conditions;
+/// it's the default within the server code when no more-specific code is chosen.
+ZulipApiException apiBadRequest({
+    String routeName = 'someRoute', String message = 'Something failed'}) {
+  return ZulipApiException(
+    routeName: routeName,
+    httpStatus: 400, code: 'BAD_REQUEST',
+    data: {}, message: message);
+}
+
+/// The error for the "events" route when the target event queue has been
+/// garbage collected.
+///
+/// https://zulip.com/api/get-events#bad_event_queue_id-errors
+ZulipApiException apiExceptionBadEventQueueId({
+  String queueId = 'fb67bf8a-c031-47cc-84cf-ed80accacda8',
+}) {
+  return ZulipApiException(
+    routeName: 'events', httpStatus: 400, code: 'BAD_EVENT_QUEUE_ID',
+    data: {'queue_id': queueId}, message: 'Bad event queue ID: $queueId');
+}
+
+/// The error the server gives when the client's credentials
+/// (API key together with email and realm URL) are no longer valid.
+///
+/// This isn't really documented, but comes from experiment and from
+/// reading the server implementation.  See:
+///   https://github.com/zulip/zulip-flutter/pull/1183#discussion_r1945865983
+///   https://chat.zulip.org/#narrow/channel/378-api-design/topic/general.20handling.20HTTP.20status.20code.20401/near/2090024
+ZulipApiException apiExceptionUnauthorized({String routeName = 'someRoute'}) {
+  return ZulipApiException(
+    routeName: routeName,
+    httpStatus: 401, code: 'UNAUTHORIZED',
+    data: {}, message: 'Invalid API key');
+}
+
+////////////////////////////////////////////////////////////////
+// Time values.
+//
+
+final timeInPast = DateTime.utc(2025, 4, 1, 8, 30, 0);
+
+/// The UNIX timestamp, in UTC seconds.
+///
+/// This is the commonly used format in the Zulip API for timestamps.
+int utcTimestamp([DateTime? dateTime]) {
+  dateTime ??= timeInPast;
+  return dateTime.toUtc().millisecondsSinceEpoch ~/ 1000;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -30,8 +92,9 @@ final Uri realmUrl = Uri.parse('https://chat.example/');
 Uri get _realmUrl => realmUrl;
 
 const String recentZulipVersion = '9.0';
-const int recentZulipFeatureLevel = 278;
+const int recentZulipFeatureLevel = 382;
 const int futureZulipFeatureLevel = 9999;
+const int ancientZulipFeatureLevel = kMinSupportedZulipFeatureLevel - 1;
 
 GetServerSettingsResult serverSettings({
   Map<String, bool>? authenticationMethods,
@@ -66,6 +129,42 @@ GetServerSettingsResult serverSettings({
     realmWebPublicAccessEnabled: realmWebPublicAccessEnabled ?? false,
   );
 }
+
+ServerEmojiData serverEmojiDataPopular = ServerEmojiData(codeToNames: {
+  '1f44d': ['+1', 'thumbs_up', 'like'],
+  '1f389': ['tada'],
+  '1f642': ['slight_smile'],
+  '2764': ['heart', 'love', 'love_you'],
+  '1f6e0': ['working_on_it', 'hammer_and_wrench', 'tools'],
+  '1f419': ['octopus'],
+});
+
+ServerEmojiData serverEmojiDataPopularPlus(ServerEmojiData data) {
+  final a = serverEmojiDataPopular;
+  final b = data;
+  final result = ServerEmojiData(
+    codeToNames: {...a.codeToNames, ...b.codeToNames},
+  );
+  assert(
+    result.codeToNames.length == a.codeToNames.length + b.codeToNames.length,
+    'eg.serverEmojiDataPopularPlus called with data that collides with eg.serverEmojiDataPopular',
+  );
+  return result;
+}
+
+/// Like [serverEmojiDataPopular], but with the legacy '1f642': ['smile']
+/// instead of '1f642': ['slight_smile']; see zulip/zulip@9feba0f16f.
+///
+/// zulip/zulip@9feba0f16f is a Server 11 commit.
+// TODO(server-11) can drop this
+ServerEmojiData serverEmojiDataPopularLegacy = ServerEmojiData(codeToNames: {
+  '1f44d': ['+1', 'thumbs_up', 'like'],
+  '1f389': ['tada'],
+  '1f642': ['smile'],
+  '2764': ['heart', 'love', 'love_you'],
+  '1f6e0': ['working_on_it', 'hammer_and_wrench', 'tools'],
+  '1f419': ['octopus'],
+});
 
 RealmEmojiItem realmEmojiItem({
   required String emojiCode,
@@ -189,6 +288,28 @@ final User thirdUser = user(fullName: 'Third User');
 final User fourthUser  = user(fullName: 'Fourth User');
 
 ////////////////////////////////////////////////////////////////
+// Data attached to the self-account on the realm
+//
+
+int _nextSavedSnippetId() => _lastSavedSnippetId++;
+int _lastSavedSnippetId = 1;
+
+SavedSnippet savedSnippet({
+  int? id,
+  String? title,
+  String? content,
+  int? dateCreated,
+}) {
+  _checkPositive(id, 'saved snippet ID');
+  return SavedSnippet(
+    id: id ?? _nextSavedSnippetId(),
+    title: title ?? 'A saved snippet',
+    content: content ?? 'foo bar baz',
+    dateCreated: dateCreated ?? 1234567890, // TODO generate timestamp
+  );
+}
+
+////////////////////////////////////////////////////////////////
 // Streams and subscriptions.
 //
 
@@ -241,7 +362,8 @@ const _stream = stream;
 
 GetStreamTopicsEntry getStreamTopicsEntry({int? maxId, String? name}) {
   maxId ??= 123;
-  return GetStreamTopicsEntry(maxId: maxId, name: name ?? 'Test Topic #$maxId');
+  return GetStreamTopicsEntry(maxId: maxId,
+    name: TopicName(name ?? 'Test Topic #$maxId'));
 }
 
 /// Construct an example subscription from a stream.
@@ -283,11 +405,20 @@ Subscription subscription(
   );
 }
 
+/// The [TopicName] constructor, but shorter.
+///
+/// Useful in test code that mentions a lot of topics in a compact format.
+TopicName t(String apiName) => TopicName(apiName);
+
+TopicNarrow topicNarrow(int channelId, String topicName, {int? with_}) {
+  return TopicNarrow(channelId, TopicName(topicName), with_: with_);
+}
+
 UserTopicItem userTopicItem(
     ZulipStream stream, String topic, UserTopicVisibilityPolicy policy) {
   return UserTopicItem(
     streamId: stream.streamId,
-    topicName: topic,
+    topicName: TopicName(topic),
     lastUpdated: 1234567890,
     visibilityPolicy: policy,
   );
@@ -458,20 +589,81 @@ DmMessage dmMessage({
   }) as Map<String, dynamic>);
 }
 
-/// A GetMessagesResult the server might return on an `anchor=newest` request.
+/// A GetMessagesResult the server might return for
+/// a request that sent the given [anchor].
+///
+/// The request's anchor controls the response's [GetMessagesResult.anchor],
+/// affects the default for [foundAnchor],
+/// and in some cases forces the value of [foundOldest] or [foundNewest].
+GetMessagesResult getMessagesResult({
+  required Anchor anchor,
+  bool? foundAnchor,
+  bool? foundOldest,
+  bool? foundNewest,
+  bool historyLimited = false,
+  required List<Message> messages,
+}) {
+  final resultAnchor = switch (anchor) {
+    AnchorCode.oldest => 0,
+    NumericAnchor(:final messageId) => messageId,
+    AnchorCode.firstUnread =>
+      throw ArgumentError("firstUnread not accepted in this helper; try NumericAnchor"),
+    AnchorCode.newest => 10_000_000_000_000_000, // that's 16 zeros
+  };
+
+  switch (anchor) {
+    case AnchorCode.oldest || AnchorCode.newest:
+      assert(foundAnchor == null);
+      foundAnchor = false;
+    case AnchorCode.firstUnread || NumericAnchor():
+      foundAnchor ??= true;
+  }
+
+  if (anchor == AnchorCode.oldest) {
+    assert(foundOldest == null);
+    foundOldest = true;
+  } else if (anchor == AnchorCode.newest) {
+    assert(foundNewest == null);
+    foundNewest = true;
+  }
+  if (foundOldest == null || foundNewest == null) throw ArgumentError();
+
+  return GetMessagesResult(
+    anchor: resultAnchor,
+    foundAnchor: foundAnchor,
+    foundOldest: foundOldest,
+    foundNewest: foundNewest,
+    historyLimited: historyLimited,
+    messages: messages,
+  );
+}
+
+/// A GetMessagesResult the server might return on an `anchor=newest` request,
+/// or `anchor=first_unread` when there are no unreads.
 GetMessagesResult newestGetMessagesResult({
   required bool foundOldest,
   bool historyLimited = false,
   required List<Message> messages,
 }) {
-  return GetMessagesResult(
-    // These anchor, foundAnchor, and foundNewest values are what the server
-    // appears to always return when the request had `anchor=newest`.
-    anchor: 10000000000000000, // that's 16 zeros
-    foundAnchor: false,
-    foundNewest: true,
+  return getMessagesResult(anchor: AnchorCode.newest, foundOldest: foundOldest,
+    historyLimited: historyLimited, messages: messages);
+}
 
+/// A GetMessagesResult the server might return on an initial request
+/// when the anchor is in the middle of history (e.g., a /near/ link).
+GetMessagesResult nearGetMessagesResult({
+  required int anchor,
+  bool foundAnchor = true,
+  required bool foundOldest,
+  required bool foundNewest,
+  bool historyLimited = false,
+  required List<Message> messages,
+}) {
+  return GetMessagesResult(
+    anchor: anchor,
+    foundAnchor: foundAnchor,
     foundOldest: foundOldest,
+    foundNewest: foundNewest,
     historyLimited: historyLimited,
     messages: messages,
   );
@@ -493,6 +685,63 @@ GetMessagesResult olderGetMessagesResult({
     historyLimited: historyLimited,
     messages: messages,
   );
+}
+
+/// A GetMessagesResult the server might return when we request newer messages.
+GetMessagesResult newerGetMessagesResult({
+  required int anchor,
+  bool foundAnchor = false, // the value if the server understood includeAnchor false
+  required bool foundNewest,
+  bool historyLimited = false,
+  required List<Message> messages,
+}) {
+  return GetMessagesResult(
+    anchor: anchor,
+    foundAnchor: foundAnchor,
+    foundOldest: false,
+    foundNewest: foundNewest,
+    historyLimited: historyLimited,
+    messages: messages,
+  );
+}
+
+int _nextLocalMessageId = 1;
+
+StreamOutboxMessage streamOutboxMessage({
+  int? localMessageId,
+  int? selfUserId,
+  int? timestamp,
+  ZulipStream? stream,
+  String? topic,
+  String? content,
+}) {
+  final effectiveStream = stream ?? _stream(streamId: defaultStreamMessageStreamId);
+  return OutboxMessage.fromConversation(
+    StreamConversation(
+      effectiveStream.streamId, TopicName(topic ?? 'topic'),
+      displayRecipient: null,
+    ),
+    localMessageId: localMessageId ?? _nextLocalMessageId++,
+    selfUserId: selfUserId ?? selfUser.userId,
+    timestamp: timestamp ?? utcTimestamp(),
+    contentMarkdown: content ?? 'content') as StreamOutboxMessage;
+}
+
+DmOutboxMessage dmOutboxMessage({
+  int? localMessageId,
+  required User from,
+  required List<User> to,
+  int? timestamp,
+  String? content,
+}) {
+  final allRecipientIds =
+    [from, ...to].map((user) => user.userId).toList()..sort();
+  return OutboxMessage.fromConversation(
+    DmConversation(allRecipientIds: allRecipientIds),
+    localMessageId: localMessageId ?? _nextLocalMessageId++,
+    selfUserId: from.userId,
+    timestamp: timestamp ?? utcTimestamp(),
+    contentMarkdown: content ?? 'content') as DmOutboxMessage;
 }
 
 PollWidgetData pollWidgetData({
@@ -518,6 +767,18 @@ Submessage submessage({
 ////////////////////////////////////////////////////////////////
 // Aggregate data structures.
 //
+
+UnreadChannelSnapshot unreadChannelMsgs({
+  required String topic,
+  required int streamId,
+  required List<int> unreadMessageIds,
+}) {
+  return UnreadChannelSnapshot(
+    topic: TopicName(topic),
+    streamId: streamId,
+    unreadMessageIds: unreadMessageIds,
+  );
+}
 
 UnreadMessagesSnapshot unreadMsgs({
   int? count,
@@ -547,11 +808,19 @@ UserTopicEvent userTopicEvent(
   return UserTopicEvent(
     id: 1,
     streamId: streamId,
-    topicName: topic,
+    topicName: TopicName(topic),
     lastUpdated: 1234567890,
     visibilityPolicy: visibilityPolicy,
   );
 }
+
+MutedUsersEvent mutedUsersEvent(List<int> userIds) {
+  return MutedUsersEvent(id: 1,
+    mutedUsers: userIds.map((id) => MutedUserItem(id: id)).toList());
+}
+
+MessageEvent messageEvent(Message message, {int? localMessageId}) =>
+  MessageEvent(id: 0, message: message, localMessageId: localMessageId?.toString());
 
 DeleteMessageEvent deleteMessageEvent(List<StreamMessage> messages) {
   assert(messages.isNotEmpty);
@@ -588,11 +857,7 @@ UpdateMessageEvent updateMessageEditEvent(
     messageIds: [messageId],
     flags: flags ?? origMessage.flags,
     editTimestamp: editTimestamp ?? 1234567890, // TODO generate timestamp
-    origStreamId: origMessage is StreamMessage ? origMessage.streamId : null,
-    newStreamId: null,
-    propagateMode: null,
-    origTopic: null,
-    newTopic: null,
+    moveData: null,
     origContent: 'some probably-mismatched old Markdown',
     origRenderedContent: origMessage.content,
     content: 'some probably-mismatched new Markdown',
@@ -605,8 +870,8 @@ UpdateMessageEvent _updateMessageMoveEvent(
   List<int> messageIds, {
   required int origStreamId,
   int? newStreamId,
-  required String origTopic,
-  String? newTopic,
+  required TopicName origTopic,
+  TopicName? newTopic,
   String? origContent,
   String? newContent,
   required List<MessageFlag> flags,
@@ -614,8 +879,6 @@ UpdateMessageEvent _updateMessageMoveEvent(
 }) {
   _checkPositive(origStreamId, 'stream ID');
   _checkPositive(newStreamId, 'stream ID');
-  assert(newTopic != origTopic
-         || (newStreamId != null && newStreamId != origStreamId));
   assert(messageIds.isNotEmpty);
   return UpdateMessageEvent(
     id: 0,
@@ -625,11 +888,13 @@ UpdateMessageEvent _updateMessageMoveEvent(
     messageIds: messageIds,
     flags: flags,
     editTimestamp: 1234567890, // TODO generate timestamp
-    origStreamId: origStreamId,
-    newStreamId: newStreamId,
-    propagateMode: propagateMode,
-    origTopic: origTopic,
-    newTopic: newTopic,
+    moveData: UpdateMessageMoveData(
+      origStreamId: origStreamId,
+      newStreamId: newStreamId ?? origStreamId,
+      origTopic: origTopic,
+      newTopic: newTopic ?? origTopic,
+      propagateMode: propagateMode,
+    ),
     origContent: origContent,
     origRenderedContent: origContent,
     content: newContent,
@@ -642,12 +907,15 @@ UpdateMessageEvent _updateMessageMoveEvent(
 UpdateMessageEvent updateMessageEventMoveFrom({
   required List<StreamMessage> origMessages,
   int? newStreamId,
-  String? newTopic,
+  TopicName? newTopic,
+  String? newTopicStr,
   String? newContent,
   PropagateMode propagateMode = PropagateMode.changeOne,
 }) {
   _checkPositive(newStreamId, 'stream ID');
   assert(origMessages.isNotEmpty);
+  assert(newTopic == null || newTopicStr == null);
+  newTopic ??= newTopicStr == null ? null : TopicName(newTopicStr);
   final origMessage = origMessages.first;
   // Only present on content change.
   final origContent = (newContent != null) ? origMessage.content : null;
@@ -667,12 +935,15 @@ UpdateMessageEvent updateMessageEventMoveFrom({
 UpdateMessageEvent updateMessageEventMoveTo({
   required List<StreamMessage> newMessages,
   int? origStreamId,
-  String? origTopic,
+  TopicName? origTopic,
+  String? origTopicStr,
   String? origContent,
   PropagateMode propagateMode = PropagateMode.changeOne,
 }) {
   _checkPositive(origStreamId, 'stream ID');
   assert(newMessages.isNotEmpty);
+  assert(origTopic == null || origTopicStr == null);
+  origTopic ??= origTopicStr == null ? null : TopicName(origTopicStr);
   final newMessage = newMessages.first;
   // Only present on topic move.
   final newTopic = (origTopic != null) ? newMessage.topic : null;
@@ -805,9 +1076,20 @@ ChannelUpdateEvent channelUpdateEvent(
 // The entire per-account or global state.
 //
 
-TestGlobalStore globalStore({List<Account> accounts = const []}) {
-  return TestGlobalStore(accounts: accounts);
+TestGlobalStore globalStore({
+  GlobalSettingsData? globalSettings,
+  Map<BoolGlobalSetting, bool>? boolGlobalSettings,
+  List<Account> accounts = const [],
+}) {
+  return TestGlobalStore(
+    globalSettings: globalSettings,
+    boolGlobalSettings: boolGlobalSettings,
+    accounts: accounts,
+  );
 }
+const _globalStore = globalStore;
+
+const String defaultRealmEmptyTopicDisplayName = 'test general chat';
 
 InitialSnapshot initialSnapshot({
   String? queueId,
@@ -818,20 +1100,31 @@ InitialSnapshot initialSnapshot({
   List<String>? alertWords,
   List<CustomProfileField>? customProfileFields,
   EmailAddressVisibility? emailAddressVisibility,
+  int? serverPresencePingIntervalSeconds,
+  int? serverPresenceOfflineThresholdSeconds,
   int? serverTypingStartedExpiryPeriodMilliseconds,
   int? serverTypingStoppedWaitPeriodMilliseconds,
   int? serverTypingStartedWaitPeriodMilliseconds,
+  List<MutedUserItem>? mutedUsers,
+  Map<int, PerUserPresence>? presences,
   Map<String, RealmEmojiItem>? realmEmoji,
   List<RecentDmConversation>? recentPrivateConversations,
+  List<SavedSnippet>? savedSnippets,
   List<Subscription>? subscriptions,
   UnreadMessagesSnapshot? unreadMsgs,
   List<ZulipStream>? streams,
   UserSettings? userSettings,
   List<UserTopicItem>? userTopics,
+  RealmWildcardMentionPolicy? realmWildcardMentionPolicy,
+  bool? realmMandatoryTopics,
   int? realmWaitingPeriodThreshold,
+  bool? realmAllowMessageEditing,
+  int? realmMessageContentEditLimitSeconds,
+  bool? realmPresenceDisabled,
   Map<String, RealmDefaultExternalAccount>? realmDefaultExternalAccounts,
   int? maxFileUploadSizeMib,
   Uri? serverEmojiDataUrl,
+  String? realmEmptyTopicDisplayName,
   List<User>? realmUsers,
   List<User>? realmNonActiveUsers,
   List<User>? crossRealmBots,
@@ -845,14 +1138,19 @@ InitialSnapshot initialSnapshot({
     alertWords: alertWords ?? ['klaxon'],
     customProfileFields: customProfileFields ?? [],
     emailAddressVisibility: emailAddressVisibility ?? EmailAddressVisibility.everyone,
+    serverPresencePingIntervalSeconds: serverPresencePingIntervalSeconds ?? 60,
+    serverPresenceOfflineThresholdSeconds: serverPresenceOfflineThresholdSeconds ?? 140,
     serverTypingStartedExpiryPeriodMilliseconds:
       serverTypingStartedExpiryPeriodMilliseconds ?? 15000,
     serverTypingStoppedWaitPeriodMilliseconds:
       serverTypingStoppedWaitPeriodMilliseconds ?? 5000,
     serverTypingStartedWaitPeriodMilliseconds:
       serverTypingStartedWaitPeriodMilliseconds ?? 10000,
+    mutedUsers: mutedUsers ?? [],
+    presences: presences ?? {},
     realmEmoji: realmEmoji ?? {},
     recentPrivateConversations: recentPrivateConversations ?? [],
+    savedSnippets: savedSnippets ?? [],
     subscriptions: subscriptions ?? [], // TODO add subscriptions to default
     unreadMsgs: unreadMsgs ?? _unreadMsgs(),
     streams: streams ?? [], // TODO add streams to default
@@ -862,11 +1160,17 @@ InitialSnapshot initialSnapshot({
       emojiset: Emojiset.google,
     ),
     userTopics: userTopics,
+    realmWildcardMentionPolicy: realmWildcardMentionPolicy ?? RealmWildcardMentionPolicy.everyone,
+    realmMandatoryTopics: realmMandatoryTopics ?? true,
     realmWaitingPeriodThreshold: realmWaitingPeriodThreshold ?? 0,
+    realmAllowMessageEditing: realmAllowMessageEditing ?? true,
+    realmMessageContentEditLimitSeconds: realmMessageContentEditLimitSeconds,
+    realmPresenceDisabled: realmPresenceDisabled ?? false,
     realmDefaultExternalAccounts: realmDefaultExternalAccounts ?? {},
     maxFileUploadSizeMib: maxFileUploadSizeMib ?? 25,
     serverEmojiDataUrl: serverEmojiDataUrl
       ?? realmUrl.replace(path: '/static/emoji.json'),
+    realmEmptyTopicDisplayName: realmEmptyTopicDisplayName ?? defaultRealmEmptyTopicDisplayName,
     realmUsers: realmUsers ?? [],
     realmNonActiveUsers: realmNonActiveUsers ?? [],
     crossRealmBots: crossRealmBots ?? [],
@@ -874,19 +1178,40 @@ InitialSnapshot initialSnapshot({
 }
 const _initialSnapshot = initialSnapshot;
 
-PerAccountStore store({Account? account, InitialSnapshot? initialSnapshot}) {
+PerAccountStore store({
+  GlobalStore? globalStore,
+  Account? account,
+  InitialSnapshot? initialSnapshot,
+}) {
   final effectiveAccount = account ?? selfAccount;
   return PerAccountStore.fromInitialSnapshot(
-    globalStore: globalStore(accounts: [effectiveAccount]),
+    globalStore: globalStore ?? _globalStore(accounts: [effectiveAccount]),
     accountId: effectiveAccount.id,
     initialSnapshot: initialSnapshot ?? _initialSnapshot(),
   );
 }
 const _store = store;
 
-UpdateMachine updateMachine({Account? account, InitialSnapshot? initialSnapshot}) {
+UpdateMachine updateMachine({
+  GlobalStore? globalStore,
+  Account? account,
+  InitialSnapshot? initialSnapshot,
+}) {
   initialSnapshot ??= _initialSnapshot();
-  final store = _store(account: account, initialSnapshot: initialSnapshot);
+  final store = _store(globalStore: globalStore,
+    account: account, initialSnapshot: initialSnapshot);
   return UpdateMachine.fromInitialSnapshot(
     store: store, initialSnapshot: initialSnapshot);
+}
+
+PackageInfo packageInfo({
+  String? version,
+  String? buildNumber,
+  String? packageName,
+}) {
+  return PackageInfo(
+    version: version ?? '1.0.0',
+    buildNumber: buildNumber ?? '1',
+    packageName: packageName ?? 'com.example.app',
+  );
 }

@@ -1,13 +1,23 @@
+import 'dart:async';
+
 import 'package:checks/checks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_checks/flutter_checks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zulip/model/actions.dart';
+import 'package:zulip/model/settings.dart';
 import 'package:zulip/model/store.dart';
+import 'package:zulip/widgets/app.dart';
+import 'package:zulip/widgets/inbox.dart';
+import 'package:zulip/widgets/page.dart';
 import 'package:zulip/widgets/store.dart';
 
 import '../flutter_checks.dart';
 import '../model/binding.dart';
 import '../example_data.dart' as eg;
 import '../model/store_checks.dart';
+import '../model/test_store.dart';
+import '../test_navigation.dart';
 
 /// A widget whose state uses [PerAccountStoreAwareStateMixin].
 class MyWidgetWithMixin extends StatefulWidget {
@@ -48,7 +58,7 @@ extension MyWidgetWithMixinStateChecks on Subject<MyWidgetWithMixinState> {
 void main() {
   TestZulipBinding.ensureInitialized();
 
-  testWidgets('GlobalStoreWidget', (tester) async {
+  testWidgets('GlobalStoreWidget loads data while showing placeholder', (tester) async {
     addTearDown(testBinding.reset);
 
     GlobalStore? globalStore;
@@ -60,18 +70,107 @@ void main() {
             return const SizedBox.shrink();
           })));
     // First, shows a loading page instead of child.
-    check(tester.any(find.byType(CircularProgressIndicator))).isTrue();
+    check(find.byType(CircularProgressIndicator)).findsOne();
     check(globalStore).isNull();
 
     await tester.pump();
     // Then after loading, mounts child instead, with provided store.
-    check(tester.any(find.byType(CircularProgressIndicator))).isFalse();
+    check(find.byType(CircularProgressIndicator)).findsNothing();
     check(globalStore).identicalTo(testBinding.globalStore);
 
     await testBinding.globalStore.add(eg.selfAccount, eg.initialSnapshot());
     check(globalStore).isNotNull()
       .accountEntries.single
       .equals((accountId: eg.selfAccount.id, account: eg.selfAccount));
+  });
+
+  testWidgets('GlobalStoreWidget awaits blockingFuture', (tester) async {
+    addTearDown(testBinding.reset);
+
+    final completer = Completer<void>();
+    await tester.pumpWidget(Directionality(textDirection: TextDirection.ltr,
+      child: GlobalStoreWidget(
+        blockingFuture: completer.future,
+        child: Text('done'))));
+
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    // Even after the store must have loaded,
+    // still shows loading page while blockingFuture is pending.
+    check(find.byType(CircularProgressIndicator)).findsOne();
+    check(find.text('done')).findsNothing();
+
+    // Once blockingFuture completes…
+    completer.complete();
+    await tester.pump();
+    // … mounts child instead of the loading page.
+    check(find.byType(CircularProgressIndicator)).findsNothing();
+    check(find.text('done')).findsOne();
+  });
+
+  testWidgets('GlobalStoreWidget handles failed blockingFuture like success', (tester) async {
+    addTearDown(testBinding.reset);
+
+    final completer = Completer<void>();
+    await tester.pumpWidget(Directionality(textDirection: TextDirection.ltr,
+      child: GlobalStoreWidget(
+        blockingFuture: completer.future,
+        child: Text('done'))));
+
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    // Even after the store must have loaded,
+    // still shows loading page while blockingFuture is pending.
+    check(find.byType(CircularProgressIndicator)).findsOne();
+    check(find.text('done')).findsNothing();
+
+    // Once blockingFuture completes, even with an error…
+    completer.completeError(Exception('oops'));
+    await tester.pump();
+    // … mounts child instead of the loading page.
+    check(find.byType(CircularProgressIndicator)).findsNothing();
+    check(find.text('done')).findsOne();
+  });
+
+  testWidgets('GlobalStoreWidget.of updates dependents', (tester) async {
+    addTearDown(testBinding.reset);
+
+    List<int>? accountIds;
+    await tester.pumpWidget(
+      Directionality(textDirection: TextDirection.ltr,
+        child: GlobalStoreWidget(
+          child: Builder(builder: (context) {
+            accountIds = GlobalStoreWidget.of(context).accountIds.toList();
+            return SizedBox.shrink();
+          }))));
+    await tester.pump();
+    check(accountIds).isNotNull().isEmpty();
+
+    await testBinding.globalStore.add(eg.selfAccount, eg.initialSnapshot());
+    await tester.pump();
+    check(accountIds).isNotNull().deepEquals([eg.selfAccount.id]);
+  });
+
+  testWidgets('GlobalStoreWidget.settingsOf updates on settings update', (tester) async {
+    addTearDown(testBinding.reset);
+    await testBinding.globalStore.settings.setThemeSetting(ThemeSetting.dark);
+
+    ThemeSetting? themeSetting;
+    await tester.pumpWidget(
+      GlobalStoreWidget(
+        child: Builder(
+          builder: (context) {
+            themeSetting = GlobalStoreWidget.settingsOf(context).themeSetting;
+            return const SizedBox.shrink();
+          })));
+    await tester.pump();
+    check(themeSetting).equals(ThemeSetting.dark);
+
+    await testBinding.globalStore.settings.setThemeSetting(ThemeSetting.light);
+    await tester.pump();
+    check(themeSetting).equals(ThemeSetting.light);
   });
 
   testWidgets('PerAccountStoreWidget basic', (tester) async {
@@ -165,6 +264,71 @@ void main() {
     // ... then its child appears immediately, without waiting to load.
     check(tester.any(find.textContaining('found store'))).isTrue();
     tester.widget(find.text('found store, account: ${eg.selfAccount.id}'));
+  });
+
+  testWidgets("PerAccountStoreWidget.routeToRemoveOnLogout logged-out account's routes removed from nav; other accounts' remain", (tester) async {
+    Future<void> makeUnreadTopicInInbox(int accountId, String topic) async {
+      final stream = eg.stream();
+      final message = eg.streamMessage(stream: stream, topic: topic);
+      final store = await testBinding.globalStore.perAccount(accountId);
+      await store.addStream(stream);
+      await store.addSubscription(eg.subscription(stream));
+      await store.addMessage(message);
+      await tester.pump();
+    }
+
+    addTearDown(testBinding.reset);
+
+    final account1 = eg.account(id: 1, user: eg.user());
+    final account2 = eg.account(id: 2, user: eg.user());
+    await testBinding.globalStore.add(account1, eg.initialSnapshot());
+    await testBinding.globalStore.add(account2, eg.initialSnapshot());
+
+    final testNavObserver = TestNavigatorObserver();
+    await tester.pumpWidget(ZulipApp(navigatorObservers: [testNavObserver]));
+    await tester.pump();
+    final navigator = await ZulipApp.navigator;
+    navigator.popUntil((_) => false); // clear starting routes
+    await tester.pumpAndSettle();
+
+    final pushedRoutes = <Route<dynamic>>[];
+    testNavObserver.onPushed = (route, prevRoute) => pushedRoutes.add(route);
+    // TODO: switch to a realistic setup:
+    //   https://github.com/zulip/zulip-flutter/pull/1076#discussion_r1874124363
+    final account1Route = MaterialAccountWidgetRoute(
+      accountId: account1.id, page: const InboxPageBody());
+    final account2Route = MaterialAccountWidgetRoute(
+      accountId: account2.id, page: const InboxPageBody());
+    unawaited(navigator.push(account1Route));
+    unawaited(navigator.push(account2Route));
+    await tester.pumpAndSettle();
+    check(pushedRoutes).deepEquals([account1Route, account2Route]);
+
+    await makeUnreadTopicInInbox(account1.id, 'topic in account1');
+    final findAccount1PageContent = find.text('topic in account1', skipOffstage: false);
+
+    await makeUnreadTopicInInbox(account2.id, 'topic in account2');
+    final findAccount2PageContent = find.text('topic in account2', skipOffstage: false);
+
+    final findLoadingPage = find.byType(LoadingPlaceholderPage, skipOffstage: false);
+
+    check(findAccount1PageContent).findsOne();
+    check(findLoadingPage).findsNothing();
+
+    final removedRoutes = <Route<dynamic>>[];
+    testNavObserver.onRemoved = (route, prevRoute) => removedRoutes.add(route);
+
+    final future = logOutAccount(testBinding.globalStore, account1.id);
+    await tester.pump(TestGlobalStore.removeAccountDuration);
+    await future;
+    check(removedRoutes).single.identicalTo(account1Route);
+    check(findAccount1PageContent).findsNothing();
+    check(findLoadingPage).findsOne();
+
+    await tester.pump();
+    check(findAccount1PageContent).findsNothing();
+    check(findLoadingPage).findsNothing();
+    check(findAccount2PageContent).findsOne();
   });
 
   testWidgets('PerAccountStoreAwareStateMixin', (tester) async {

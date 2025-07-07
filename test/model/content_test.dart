@@ -6,7 +6,10 @@ import 'package:stack_trace/stack_trace.dart';
 import 'package:test/scaffolding.dart';
 import 'package:zulip/model/code_block.dart';
 import 'package:zulip/model/content.dart';
+import 'package:zulip/model/settings.dart';
+import 'package:zulip/model/katex.dart';
 
+import 'binding.dart';
 import 'content_checks.dart';
 
 /// An example of Zulip content for test cases.
@@ -269,6 +272,26 @@ class ContentExample {
       url: '/#narrow/channel/378-api-design/topic/notation.20for.20near.20links/near/1972281',
       nodes: [TextNode('#api design > notation for near links @ 💬')]));
 
+  static const orderedListCustomStart = ContentExample(
+    'ordered list with custom start',
+    '5. fifth\n6. sixth',
+    '<ol start="5">\n<li>fifth</li>\n<li>sixth</li>\n</ol>',
+    [OrderedListNode(start: 5, [
+      [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('fifth')])],
+      [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('sixth')])],
+    ])],
+  );
+
+  static const orderedListLargeStart = ContentExample(
+    'ordered list with large start number',
+    '9999. first\n10000. second',
+    '<ol start="9999">\n<li>first</li>\n<li>second</li>\n</ol>',
+    [OrderedListNode(start: 9999, [
+      [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('first')])],
+      [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('second')])],
+    ])],
+  );
+
   static const spoilerDefaultHeader = ContentExample(
     'spoiler with default header',
     '```spoiler\nhello world\n```',
@@ -306,8 +329,8 @@ class ContentExample {
         '<p><em>italic</em> <a href="https://zulip.com/">zulip</a></p>\n'
         '</div></div>',
     [SpoilerNode(
-      header: [ListNode(ListStyle.ordered, [
-        [ListNode(ListStyle.unordered, [
+      header: [OrderedListNode(start: 1, [
+        [UnorderedListNode([
           [HeadingNode(level: HeadingLevel.h2, links: null, nodes: [
             TextNode('hello'),
           ])]
@@ -494,7 +517,17 @@ class ContentExample {
       '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>λ</mi></mrow>'
         '<annotation encoding="application/x-tex"> \\lambda </annotation></semantics></math></span>'
       '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">λ</span></span></span></span></p>',
-    const MathInlineNode(texSource: r'\lambda'));
+    MathInlineNode(texSource: r'\lambda', nodes: [
+      KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.6944), text: null, nodes: []),
+        KatexSpanNode(
+          styles: KatexSpanStyles(
+            fontFamily: 'KaTeX_Math',
+            fontStyle: KatexSpanFontStyle.italic),
+          text: 'λ',
+          nodes: null),
+      ]),
+    ]));
 
   static const mathBlock = ContentExample(
     'math block',
@@ -504,7 +537,54 @@ class ContentExample {
       '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>λ</mi></mrow>'
         '<annotation encoding="application/x-tex">\\lambda</annotation></semantics></math></span>'
       '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">λ</span></span></span></span></span></p>',
-    [MathBlockNode(texSource: r'\lambda')]);
+    [MathBlockNode(texSource: r'\lambda', nodes: [
+      KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.6944), text: null, nodes: []),
+        KatexSpanNode(
+          styles: KatexSpanStyles(
+            fontFamily: 'KaTeX_Math',
+            fontStyle: KatexSpanFontStyle.italic),
+          text: 'λ',
+          nodes: null),
+      ]),
+    ])]);
+
+  static const mathBlocksMultipleInParagraph = ContentExample(
+    'math blocks, multiple in paragraph',
+    '```math\na\n\nb\n```',
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/.E2.9C.94.20Rajesh/near/2001490
+    '<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>a</mi></mrow>'
+          '<annotation encoding="application/x-tex">a</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">a</span></span></span></span></span>\n\n'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>b</mi></mrow>'
+          '<annotation encoding="application/x-tex">b</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">b</span></span></span></span></span></p>', [
+      MathBlockNode(texSource: 'a', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.4306), text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'a',
+            nodes: null),
+        ]),
+      ]),
+      MathBlockNode(texSource: 'b', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.6944), text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'b',
+            nodes: null),
+        ]),
+      ]),
+    ]);
 
   static const mathBlockInQuote = ContentExample(
     'math block in quote',
@@ -520,7 +600,298 @@ class ContentExample {
           '<annotation encoding="application/x-tex">\\lambda</annotation></semantics></math></span>'
         '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">λ</span></span></span></span></span>'
       '<br>\n</p>\n</blockquote>',
-    [QuotationNode([MathBlockNode(texSource: r'\lambda')])]);
+    [QuotationNode([
+      MathBlockNode(texSource: r'\lambda', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.6944), text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'λ',
+            nodes: null),
+        ]),
+      ]),
+    ])]);
+
+  static const mathBlocksMultipleInQuote = ContentExample(
+    'math blocks, multiple in quote',
+    "````quote\n```math\na\n\nb\n```\n````",
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/.E2.9C.94.20Rajesh/near/2029236
+    '<blockquote>\n<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>a</mi></mrow>'
+          '<annotation encoding="application/x-tex">a</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">a</span></span></span></span></span>'
+      '\n\n'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>b</mi></mrow>'
+          '<annotation encoding="application/x-tex">b</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">b</span></span></span></span></span>'
+      '<br>\n</p>\n</blockquote>',
+    [QuotationNode([
+      MathBlockNode(texSource: 'a', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.4306), text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'a',
+            nodes: null),
+        ]),
+      ]),
+      MathBlockNode(texSource: 'b', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.6944), text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'b',
+            nodes: null),
+        ]),
+      ]),
+    ])]);
+
+  static const mathBlockBetweenImages = ContentExample(
+    'math block between images',
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/Greg/near/2035891
+    'https://upload.wikimedia.org/wikipedia/commons/7/78/Verregende_bloem_van_een_Helenium_%27El_Dorado%27._22-07-2023._%28d.j.b%29.jpg\n```math\na\n```\nhttps://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Zaadpluizen_van_een_Clematis_texensis_%27Princess_Diana%27._18-07-2023_%28actm.%29_02.jpg/1280px-Zaadpluizen_van_een_Clematis_texensis_%27Princess_Diana%27._18-07-2023_%28actm.%29_02.jpg',
+    '<div class="message_inline_image">'
+      '<a href="https://upload.wikimedia.org/wikipedia/commons/7/78/Verregende_bloem_van_een_Helenium_%27El_Dorado%27._22-07-2023._%28d.j.b%29.jpg">'
+        '<img src="/external_content/de28eb3abf4b7786de4545023dc42d434a2ea0c2/68747470733a2f2f75706c6f61642e77696b696d656469612e6f72672f77696b6970656469612f636f6d6d6f6e732f372f37382f566572726567656e64655f626c6f656d5f76616e5f65656e5f48656c656e69756d5f253237456c5f446f7261646f2532372e5f32322d30372d323032332e5f253238642e6a2e622532392e6a7067"></a></div>'
+    '<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>a</mi></mrow>'
+          '<annotation encoding="application/x-tex">a</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">a</span></span></span></span></span>'
+    '</p>\n'
+    '<div class="message_inline_image">'
+      '<a href="https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Zaadpluizen_van_een_Clematis_texensis_%27Princess_Diana%27._18-07-2023_%28actm.%29_02.jpg/1280px-Zaadpluizen_van_een_Clematis_texensis_%27Princess_Diana%27._18-07-2023_%28actm.%29_02.jpg">'
+        '<img src="/external_content/58b0ef9a06d7bb24faec2b11df2f57f476e6f6bb/68747470733a2f2f75706c6f61642e77696b696d656469612e6f72672f77696b6970656469612f636f6d6d6f6e732f7468756d622f372f37312f5a616164706c75697a656e5f76616e5f65656e5f436c656d617469735f746578656e7369735f2532375072696e636573735f4469616e612532372e5f31382d30372d323032335f2532386163746d2e2532395f30322e6a70672f3132383070782d5a616164706c75697a656e5f76616e5f65656e5f436c656d617469735f746578656e7369735f2532375072696e636573735f4469616e612532372e5f31382d30372d323032335f2532386163746d2e2532395f30322e6a7067"></a></div>',
+    [
+      ImageNodeList([
+        ImageNode(
+          srcUrl: '/external_content/de28eb3abf4b7786de4545023dc42d434a2ea0c2/68747470733a2f2f75706c6f61642e77696b696d656469612e6f72672f77696b6970656469612f636f6d6d6f6e732f372f37382f566572726567656e64655f626c6f656d5f76616e5f65656e5f48656c656e69756d5f253237456c5f446f7261646f2532372e5f32322d30372d323032332e5f253238642e6a2e622532392e6a7067',
+          thumbnailUrl: null,
+          loading: false,
+          originalWidth: null,
+          originalHeight: null),
+      ]),
+      MathBlockNode(texSource: 'a', nodes: [
+        KatexSpanNode(styles: KatexSpanStyles(), text: null, nodes: [
+          KatexSpanNode(styles: KatexSpanStyles(heightEm: 0.4306),text: null, nodes: []),
+          KatexSpanNode(
+            styles: KatexSpanStyles(
+              fontFamily: 'KaTeX_Math',
+              fontStyle: KatexSpanFontStyle.italic),
+            text: 'a', nodes: null),
+        ]),
+      ]),
+      ImageNodeList([
+        ImageNode(
+          srcUrl: '/external_content/58b0ef9a06d7bb24faec2b11df2f57f476e6f6bb/68747470733a2f2f75706c6f61642e77696b696d656469612e6f72672f77696b6970656469612f636f6d6d6f6e732f7468756d622f372f37312f5a616164706c75697a656e5f76616e5f65656e5f436c656d617469735f746578656e7369735f2532375072696e636573735f4469616e612532372e5f31382d30372d323032335f2532386163746d2e2532395f30322e6a70672f3132383070782d5a616164706c75697a656e5f76616e5f65656e5f436c656d617469735f746578656e7369735f2532375072696e636573735f4469616e612532372e5f31382d30372d323032335f2532386163746d2e2532395f30322e6a7067',
+          thumbnailUrl: null,
+          loading: false,
+          originalWidth: null,
+          originalHeight: null),
+      ]),
+    ]);
+
+  // The font sizes can be compared using the katex.css generated
+  // from katex.scss :
+  //   https://unpkg.com/katex@0.16.21/dist/katex.css
+  static const mathBlockKatexSizing = ContentExample(
+    'math block; KaTeX different sizing',
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/Rajesh/near/2155476
+    '```math\n\\Huge 1\n\\huge 2\n\\LARGE 3\n\\Large 4\n\\large 5\n\\normalsize 6\n\\small 7\n\\footnotesize 8\n\\scriptsize 9\n\\tiny 0\n```',
+    '<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mstyle mathsize="2.488em"><mn>1</mn><mstyle mathsize="2.074em"><mn>2</mn><mstyle mathsize="1.728em"><mn>3</mn><mstyle mathsize="1.44em"><mn>4</mn><mstyle mathsize="1.2em"><mn>5</mn><mstyle mathsize="1em"><mn>6</mn><mstyle mathsize="0.9em"><mn>7</mn><mstyle mathsize="0.8em"><mn>8</mn><mstyle mathsize="0.7em"><mn>9</mn><mstyle mathsize="0.5em"><mn>0</mn></mstyle></mstyle></mstyle></mstyle></mstyle></mstyle></mstyle></mstyle></mstyle></mstyle></mrow>'
+          '<annotation encoding="application/x-tex">\\Huge 1\n\\huge 2\n\\LARGE 3\n\\Large 4\n\\large 5\n\\normalsize 6\n\\small 7\n\\footnotesize 8\n\\scriptsize 9\n\\tiny 0</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true">'
+          '<span class="base">'
+            '<span class="strut" style="height:1.6034em;"></span>'
+            '<span class="mord sizing reset-size6 size11">1</span>'
+            '<span class="mord sizing reset-size6 size10">2</span>'
+            '<span class="mord sizing reset-size6 size9">3</span>'
+            '<span class="mord sizing reset-size6 size8">4</span>'
+            '<span class="mord sizing reset-size6 size7">5</span>'
+            '<span class="mord sizing reset-size6 size6">6</span>'
+            '<span class="mord sizing reset-size6 size5">7</span>'
+            '<span class="mord sizing reset-size6 size4">8</span>'
+            '<span class="mord sizing reset-size6 size3">9</span>'
+            '<span class="mord sizing reset-size6 size1">0</span></span></span></span></span></p>',
+    [
+      MathBlockNode(
+        texSource: "\\Huge 1\n\\huge 2\n\\LARGE 3\n\\Large 4\n\\large 5\n\\normalsize 6\n\\small 7\n\\footnotesize 8\n\\scriptsize 9\n\\tiny 0",
+        nodes: [
+          KatexSpanNode(
+            styles: KatexSpanStyles(),
+            text: null,
+            nodes: [
+              KatexSpanNode(
+                styles: KatexSpanStyles(heightEm: 1.6034),
+                text: null,
+                nodes: []),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 2.488), // .reset-size6.size11
+                text: '1',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 2.074), // .reset-size6.size10
+                text: '2',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 1.728), // .reset-size6.size9
+                text: '3',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 1.44), // .reset-size6.size8
+                text: '4',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 1.2), // .reset-size6.size7
+                text: '5',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 1.0), // .reset-size6.size6
+                text: '6',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 0.9), // .reset-size6.size5
+                text: '7',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 0.8), // .reset-size6.size4
+                text: '8',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 0.7), // .reset-size6.size3
+                text: '9',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 0.5), // .reset-size6.size1
+                text: '0',
+                nodes: null),
+            ]),
+        ]),
+    ]);
+
+  static const mathBlockKatexNestedSizing = ContentExample(
+    'math block; KaTeX nested sizing',
+    '```math\n\\tiny {1 \\Huge 2}\n```',
+    '<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mstyle mathsize="0.5em"><mrow><mn>1</mn><mstyle mathsize="2.488em"><mn>2</mn></mstyle></mrow></mstyle></mrow>'
+          '<annotation encoding="application/x-tex">\\tiny {1 \\Huge 2}</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true">'
+          '<span class="base">'
+            '<span class="strut" style="height:1.6034em;"></span>'
+            '<span class="mord sizing reset-size6 size1">'
+              '<span class="mord">1</span>'
+              '<span class="mord sizing reset-size1 size11">2</span></span></span></span></span></span></p>',
+    [
+      MathBlockNode(
+        texSource: '\\tiny {1 \\Huge 2}',
+        nodes: [
+          KatexSpanNode(
+            styles: KatexSpanStyles(),
+            text: null,
+            nodes: [
+              KatexSpanNode(
+                styles: KatexSpanStyles(heightEm: 1.6034),
+                text: null,
+                nodes: []),
+              KatexSpanNode(
+                styles: KatexSpanStyles(fontSizeEm: 0.5), // reset-size6 size1
+                text: null,
+                nodes: [
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(),
+                    text: '1',
+                    nodes: null),
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(fontSizeEm: 4.976), // reset-size1 size11
+                    text: '2',
+                    nodes: null),
+                ]),
+            ]),
+        ]),
+    ]);
+
+  static const mathBlockKatexDelimSizing = ContentExample(
+    'math block; KaTeX delimiter sizing',
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/Rajesh/near/2147135
+    '```math\n⟨ \\big( \\Big[ \\bigg⌈ \\Bigg⌊\n```',
+    '<p>'
+      '<span class="katex-display"><span class="katex">'
+        '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mo stretchy="false">⟨</mo><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><mo fence="false" stretchy="true" minsize="1.8em" maxsize="1.8em">[</mo><mo fence="false" stretchy="true" minsize="2.4em" maxsize="2.4em">⌈</mo><mo fence="false" stretchy="true" minsize="3em" maxsize="3em">⌊</mo></mrow>'
+          '<annotation encoding="application/x-tex">⟨ \\big( \\Big[ \\bigg⌈ \\Bigg⌊</annotation></semantics></math></span>'
+        '<span class="katex-html" aria-hidden="true">'
+          '<span class="base">'
+            '<span class="strut" style="height:3em;vertical-align:-1.25em;"></span>'
+            '<span class="mopen">⟨</span>'
+            '<span class="mord"><span class="delimsizing size1">(</span></span>'
+            '<span class="mord"><span class="delimsizing size2">[</span></span>'
+            '<span class="mord"><span class="delimsizing size3">⌈</span></span>'
+            '<span class="mord"><span class="delimsizing size4">⌊</span></span></span></span></span></span></p>',
+    [
+      MathBlockNode(
+        texSource: '⟨ \\big( \\Big[ \\bigg⌈ \\Bigg⌊',
+        nodes: [
+          KatexSpanNode(
+            styles: KatexSpanStyles(),
+            text: null,
+            nodes: [
+              KatexSpanNode(
+                styles: KatexSpanStyles(heightEm: 3.0),
+                text: null,
+                nodes: []),
+              KatexSpanNode(
+                styles: KatexSpanStyles(),
+                text: '⟨',
+                nodes: null),
+              KatexSpanNode(
+                styles: KatexSpanStyles(),
+                text: null,
+                nodes: [
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(fontFamily: 'KaTeX_Size1'),
+                    text: '(',
+                    nodes: null),
+                ]),
+              KatexSpanNode(
+                styles: KatexSpanStyles(),
+                text: null,
+                nodes: [
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(fontFamily: 'KaTeX_Size2'),
+                    text: '[',
+                    nodes: null),
+                ]),
+              KatexSpanNode(
+                styles: KatexSpanStyles(),
+                text: null,
+                nodes: [
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(fontFamily: 'KaTeX_Size3'),
+                    text: '⌈',
+                    nodes: null),
+                ]),
+              KatexSpanNode(
+                styles: KatexSpanStyles(),
+                text: null,
+                nodes: [
+                  KatexSpanNode(
+                    styles: KatexSpanStyles(fontFamily: 'KaTeX_Size4'),
+                    text: '⌊',
+                    nodes: null),
+                ]),
+            ]),
+        ]),
+    ]);
 
   static const imageSingle = ContentExample(
     'single image',
@@ -763,7 +1134,7 @@ class ContentExample {
         '<div class="message_inline_image">'
           '<a href="https://chat.zulip.org/user_avatars/2/realm/icon.png">'
             '<img src="https://chat.zulip.org/user_avatars/2/realm/icon.png"></a></div></li>\n</ul>', [
-    ListNode(ListStyle.unordered, [[
+    UnorderedListNode([[
       ImageNodeList([
         ImageNode(srcUrl: 'https://chat.zulip.org/user_avatars/2/realm/icon.png',
           thumbnailUrl: null, loading: false,
@@ -785,7 +1156,7 @@ class ContentExample {
         '<div class="message_inline_image">'
           '<a href="https://chat.zulip.org/user_avatars/2/realm/icon.png?version=2" title="icon.png">'
             '<img src="https://chat.zulip.org/user_avatars/2/realm/icon.png?version=2"></a></div></li>\n</ul>', [
-    ListNode(ListStyle.unordered, [[
+    UnorderedListNode([[
       ParagraphNode(wasImplicit: true, links: null, nodes: [
         LinkNode(url: 'https://chat.zulip.org/user_avatars/2/realm/icon.png', nodes: [TextNode('icon.png')]),
         TextNode(' '),
@@ -814,7 +1185,7 @@ class ContentExample {
           '<a href="https://chat.zulip.org/user_avatars/2/realm/icon.png" title="icon.png">'
             '<img src="https://chat.zulip.org/user_avatars/2/realm/icon.png"></a></div>'
         'more text</li>\n</ul>', [
-    ListNode(ListStyle.unordered, [[
+    UnorderedListNode([[
       const ParagraphNode(wasImplicit: true, links: null, nodes: [
         LinkNode(url: 'https://chat.zulip.org/user_avatars/2/realm/icon.png', nodes: [TextNode('icon.png')]),
         TextNode(' '),
@@ -954,6 +1325,128 @@ class ContentExample {
       LinkNode(url: '/user_uploads/2/78/_KoRecCHZTFrVtyTKCkIh5Hq/Big-Buck-Bunny.webm', nodes: [TextNode('Big-Buck-Bunny.webm')]),
     ]),
     InlineVideoNode(srcUrl: '/user_uploads/2/78/_KoRecCHZTFrVtyTKCkIh5Hq/Big-Buck-Bunny.webm'),
+  ]);
+
+  static const audioInline = ContentExample(
+    'audio inline',
+    '![crab-rave.mp3](/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3)',
+    '<p><audio controls preload="metadata" src="/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3" title="crab-rave.mp3"></audio></p>', [
+    ParagraphNode(links: null, nodes: [
+      LinkNode(url: '/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3', nodes: [TextNode('crab-rave.mp3')]),
+    ]),
+  ]);
+
+  static const audioInlineNoTitle = ContentExample(
+    'audio inline no title',
+    '![](/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3)',
+    '<p><audio controls preload="metadata" src="/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3"></audio></p>', [
+    ParagraphNode(links: null, nodes: [
+      LinkNode(url: '/user_uploads/2/f2/a_WnijOXIeRnI6OSxo9F6gZM/crab-rave.mp3', nodes: [TextNode('crab-rave.mp3')]),
+    ]),
+  ]);
+
+  static const websitePreviewSmoke = ContentExample(
+    'website preview smoke',
+    'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html',
+    '<p><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html">https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html</a></p>\n'
+    '<div class="message_embed">'
+      '<a class="message_embed_image" href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html" style="background-image: url(&quot;https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67&quot;)"></a>'
+      '<div class="data-container">'
+        '<div class="message_embed_title"><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html" title="Zulip — organized team chat">Zulip — organized team chat</a></div>'
+        '<div class="message_embed_description">Zulip is an organized team chat app for distributed teams of all sizes.</div></div></div>', [
+    ParagraphNode(links: [], nodes: [
+      LinkNode(
+        nodes: [TextNode('https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html')],
+        url: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html'),
+    ]),
+    WebsitePreviewNode(
+      hrefUrl: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title+description.html',
+      imageSrcUrl: 'https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67',
+      title: 'Zulip — organized team chat',
+      description: 'Zulip is an organized team chat app for distributed teams of all sizes.'),
+  ]);
+
+  static const websitePreviewWithoutTitle = ContentExample(
+    'website preview without title',
+    'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html',
+    '<p><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html">https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html</a></p>\n'
+    '<div class="message_embed">'
+      '<a class="message_embed_image" href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html" style="background-image: url(&quot;https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67&quot;)"></a>'
+      '<div class="data-container">'
+        '<div class="message_embed_description">Zulip is an organized team chat app for distributed teams of all sizes.</div></div></div>', [
+    ParagraphNode(links: [], nodes: [
+      LinkNode(
+        nodes: [TextNode('https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html')],
+        url: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html'),
+    ]),
+    WebsitePreviewNode(
+      hrefUrl: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+description+notitle.html',
+      imageSrcUrl: 'https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67',
+      title: null,
+      description: 'Zulip is an organized team chat app for distributed teams of all sizes.'),
+  ]);
+
+  static const websitePreviewWithoutDescription = ContentExample(
+    'website preview without description',
+    'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html',
+    '<p><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html">https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html</a></p>\n'
+    '<div class="message_embed">'
+      '<a class="message_embed_image" href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html" style="background-image: url(&quot;https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67&quot;)"></a>'
+      '<div class="data-container">'
+        '<div class="message_embed_title"><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html" title="Zulip — organized team chat">Zulip — organized team chat</a></div></div></div>', [
+    ParagraphNode(links: [], nodes: [
+      LinkNode(
+        nodes: [TextNode('https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html')],
+        url: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html'),
+    ]),
+    WebsitePreviewNode(
+      hrefUrl: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+title.html',
+      imageSrcUrl: 'https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67',
+      title: 'Zulip — organized team chat',
+      description: null),
+  ]);
+
+  static const websitePreviewWithoutTitleOrDescription = ContentExample(
+    'website preview without title and description',
+    'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html',
+    '<p><a href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html">https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html</a></p>\n'
+    '<div class="message_embed">'
+      '<a class="message_embed_image" href="https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html" style="background-image: url(&quot;https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67&quot;)"></a>'
+      '<div class="data-container"></div></div>', [
+    ParagraphNode(links: [], nodes: [
+      LinkNode(
+        nodes: [TextNode('https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html')],
+        url: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html'),
+    ]),
+    WebsitePreviewNode(
+      hrefUrl: 'https://pub-14f7b5e1308d42b69c4a46608442a50c.r2.dev/image+nodescription+notitle.html',
+      imageSrcUrl: 'https://uploads.zulipusercontent.net/98fe2fe57d1ac641d4d84b6de2c520ff48fcf498/68747470733a2f2f7374617469632e7a756c6970636861742e636f6d2f7374617469632f696d616765732f6c6f676f2f7a756c69702d69636f6e2d313238783132382e706e67',
+      title: null,
+      description: null),
+  ]);
+
+  static const legacyWebsitePreviewSmoke = ContentExample(
+    'legacy website preview smoke',
+    // https://chat.zulip.org/#narrow/channel/7-test-here/topic/URL.20previews/near/192777
+    'www.youtube.com',
+    '<p><a href="http://www.youtube.com" target="_blank" title="http://www.youtube.com">www.youtube.com</a></p>\n'
+    '<div class="message_embed">'
+      '<a class="message_embed_image" href="http://www.youtube.com" style="background-image: url(https://youtube.com/yts/img/yt_1200-vfl4C3T0K.png)" target="_blank"></a>'
+      '<div class="data-container">'
+        '<div class="message_embed_title"><a href="http://www.youtube.com" target="_blank" title="YouTube">YouTube</a></div>'
+        '<div class="message_embed_description">Enjoy the videos and music you love, upload original content, and share it all with friends, family, and the world on YouTube.</div></div></div>', [
+    ParagraphNode(links: [], nodes: [
+      LinkNode(
+        nodes: [TextNode('www.youtube.com')],
+        url: 'http://www.youtube.com'),
+    ]),
+    WebsitePreviewNode(
+      hrefUrl: 'http://www.youtube.com',
+      imageSrcUrl: 'https://youtube.com/yts/img/yt_1200-vfl4C3T0K.png',
+      title: 'YouTube',
+      description: 'Enjoy the videos and music you love, upload '
+        'original content, and share it all with friends, family, and '
+        'the world on YouTube.'),
   ]);
 
   static const tableWithSingleRow = ContentExample(
@@ -1167,18 +1660,21 @@ UnimplementedInlineContentNode inlineUnimplemented(String html) {
   return UnimplementedInlineContentNode(htmlNode: fragment.nodes.single);
 }
 
-void testParse(String name, String html, List<BlockContentNode> nodes) {
+void testParse(String name, String html, List<BlockContentNode> nodes, {
+  Object? skip,
+}) {
   test(name, () {
     check(parseContent(html))
       .equalsNode(ZulipContent(nodes: nodes));
-  });
+  }, skip: skip);
 }
 
-void testParseExample(ContentExample example) {
-  testParse('parse ${example.description}', example.html, example.expectedNodes);
+void testParseExample(ContentExample example, {Object? skip}) {
+  testParse('parse ${example.description}', example.html, example.expectedNodes,
+    skip: skip);
 }
 
-void main() {
+void main() async {
   // When writing test cases in this file:
   //
   //  * Prefer to add a [ContentExample] static and use [testParseExample].
@@ -1186,6 +1682,12 @@ void main() {
   //    calling `testContentSmoke`, for a widgets test on the same example.
   //
   //  * To write the example, see comment at top of [ContentExample].
+
+  TestZulipBinding.ensureInitialized();
+
+  // We need this to be able to test the currently experimental KaTeX code.
+  await testBinding.globalStore.settings.setBool(
+    BoolGlobalSetting.renderKatex, true);
 
   //
   // Inline content.
@@ -1382,7 +1884,7 @@ void main() {
     testParse('<ol>',
       // "1. first\n2. then"
       '<ol>\n<li>first</li>\n<li>then</li>\n</ol>', const [
-        ListNode(ListStyle.ordered, [
+        OrderedListNode(start: 1, [
           [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('first')])],
           [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('then')])],
         ]),
@@ -1391,7 +1893,7 @@ void main() {
     testParse('<ul>',
       // "* something\n* another"
       '<ul>\n<li>something</li>\n<li>another</li>\n</ul>', const [
-        ListNode(ListStyle.unordered, [
+        UnorderedListNode([
           [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('something')])],
           [ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('another')])],
         ]),
@@ -1400,7 +1902,7 @@ void main() {
     testParse('implicit paragraph with internal <br>',
       // "* a\n  b"
       '<ul>\n<li>a<br>\n  b</li>\n</ul>', const [
-        ListNode(ListStyle.unordered, [
+        UnorderedListNode([
           [ParagraphNode(wasImplicit: true, links: null, nodes: [
             TextNode('a'),
             LineBreakInlineNode(),
@@ -1412,13 +1914,16 @@ void main() {
     testParse('explicit paragraphs',
       // "* a\n\n  b"
       '<ul>\n<li>\n<p>a</p>\n<p>b</p>\n</li>\n</ul>', const [
-        ListNode(ListStyle.unordered, [
+        UnorderedListNode([
           [
             ParagraphNode(links: null, nodes: [TextNode('a')]),
             ParagraphNode(links: null, nodes: [TextNode('b')]),
           ],
         ]),
       ]);
+
+    testParseExample(ContentExample.orderedListCustomStart);
+    testParseExample(ContentExample.orderedListLargeStart);
   });
 
   testParseExample(ContentExample.spoilerDefaultHeader);
@@ -1451,7 +1956,7 @@ void main() {
     testParse('link in list item',
       // "* [t](/u)"
       '<ul>\n<li><a href="/u">t</a></li>\n</ul>', const [
-        ListNode(ListStyle.unordered, [
+        UnorderedListNode([
           [ParagraphNode(links: null, wasImplicit: true, nodes: [
             LinkNode(url: '/u', nodes: [TextNode('t')]),
           ])],
@@ -1470,7 +1975,16 @@ void main() {
   testParseExample(ContentExample.codeBlockFollowedByMultipleLineBreaks);
 
   testParseExample(ContentExample.mathBlock);
+  testParseExample(ContentExample.mathBlocksMultipleInParagraph);
   testParseExample(ContentExample.mathBlockInQuote);
+  testParseExample(ContentExample.mathBlocksMultipleInQuote);
+  testParseExample(ContentExample.mathBlockBetweenImages);
+  testParseExample(ContentExample.mathBlockKatexSizing);
+  testParseExample(ContentExample.mathBlockKatexNestedSizing);
+  // TODO: Re-enable this test after adding support for parsing
+  //       `vertical-align` in inline styles. Currently it fails
+  //       because `strut` span has `vertical-align`.
+  testParseExample(ContentExample.mathBlockKatexDelimSizing, skip: true);
 
   testParseExample(ContentExample.imageSingle);
   testParseExample(ContentExample.imageSingleNoDimensions);
@@ -1494,6 +2008,15 @@ void main() {
   testParseExample(ContentExample.videoInline);
   testParseExample(ContentExample.videoInlineClassesFlipped);
 
+  testParseExample(ContentExample.audioInline);
+  testParseExample(ContentExample.audioInlineNoTitle);
+
+  testParseExample(ContentExample.websitePreviewSmoke);
+  testParseExample(ContentExample.websitePreviewWithoutTitle);
+  testParseExample(ContentExample.websitePreviewWithoutDescription);
+  testParseExample(ContentExample.websitePreviewWithoutTitleOrDescription);
+  testParseExample(ContentExample.legacyWebsitePreviewSmoke);
+
   testParseExample(ContentExample.tableWithSingleRow);
   testParseExample(ContentExample.tableWithMultipleRows);
   testParseExample(ContentExample.tableWithBoldAndItalicHeaders);
@@ -1509,10 +2032,10 @@ void main() {
     '<ol>\n<li>\n<blockquote>\n<h6>two</h6>\n<ul>\n<li>three</li>\n'
         '</ul>\n</blockquote>\n<div class="codehilite"><pre><span></span>'
         '<code>four\n</code></pre></div>\n\n</li>\n</ol>', const [
-      ListNode(ListStyle.ordered, [[
+      OrderedListNode(start: 1, [[
         QuotationNode([
           HeadingNode(level: HeadingLevel.h6, links: null, nodes: [TextNode('two')]),
-          ListNode(ListStyle.unordered, [[
+          UnorderedListNode([[
             ParagraphNode(wasImplicit: true, links: null, nodes: [TextNode('three')]),
           ]]),
         ]),
@@ -1538,7 +2061,7 @@ void main() {
       r'^\s*static\s+(?:const|final)\s+(\w+)\s*=\s*ContentExample\s*(?:\.\s*inline\s*)?\(',
     ).allMatches(source).map((m) => m.group(1));
     final testedExamples = RegExp(multiLine: true,
-      r'^\s*testParseExample\s*\(\s*ContentExample\s*\.\s*(\w+)\);',
+      r'^\s*testParseExample\s*\(\s*ContentExample\s*\.\s*(\w+)(?:,\s*skip:\s*true)?\s*\);',
     ).allMatches(source).map((m) => m.group(1));
     check(testedExamples).unorderedEquals(declaredExamples);
   }, skip: Platform.isWindows, // [intended] purely analyzes source, so

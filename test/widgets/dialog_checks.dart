@@ -1,4 +1,6 @@
+import 'package:checks/checks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_checks/flutter_checks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zulip/widgets/dialog.dart';
 
@@ -21,9 +23,16 @@ Widget checkErrorDialog(WidgetTester tester, {
       of: find.byWidget(dialog.content!), matching: find.text(expectedMessage)));
   }
 
+  // TODO check "Learn more" button?
+
   return tester.widget(
     find.descendant(of: find.byWidget(dialog),
       matching: find.widgetWithText(TextButton, 'OK')));
+}
+
+// TODO(#996) update this to check for per-platform flavors of alert dialog
+void checkNoErrorDialog(WidgetTester tester) {
+  check(find.byType(AlertDialog)).findsNothing();
 }
 
 /// In a widget test, check that [showSuggestedActionDialog] was called

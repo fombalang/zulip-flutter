@@ -4,13 +4,16 @@ import 'package:clock/clock.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:test/fake.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:zulip/host/android_notifications.dart';
+import 'package:zulip/host/notifications.dart';
 import 'package:zulip/model/binding.dart';
 import 'package:zulip/model/store.dart';
 import 'package:zulip/widgets/app.dart';
 
+import '../example_data.dart' as eg;
 import 'test_store.dart';
 
 /// The binding instance used in tests.
@@ -29,7 +32,7 @@ TestZulipBinding get testBinding => TestZulipBinding.instance;
 /// and [TestGlobalStore.add] to set up test data there.  Such test functions
 /// must also call [reset] to clean up the global store.
 ///
-/// The global store returned by [loadGlobalStore], and consequently by
+/// The global store returned by [getGlobalStore], and consequently by
 /// [GlobalStoreWidget.of] in application code, will be a [TestGlobalStore].
 class TestZulipBinding extends ZulipBinding {
   /// Initialize the binding if necessary, and ensure it is a [TestZulipBinding].
@@ -85,7 +88,7 @@ class TestZulipBinding extends ZulipBinding {
   ///
   /// Tests that access this getter, or that mount a [GlobalStoreWidget],
   /// should clean up by calling [reset].
-  TestGlobalStore get globalStore => _globalStore ??= TestGlobalStore(accounts: []);
+  TestGlobalStore get globalStore => _globalStore ??= eg.globalStore();
   TestGlobalStore? _globalStore;
 
   bool _debugAlreadyLoadedStore = false;
@@ -101,6 +104,9 @@ class TestZulipBinding extends ZulipBinding {
 
   @override
   Future<GlobalStore> getGlobalStore() => Future.value(globalStore);
+
+  @override
+  GlobalStore? getGlobalStoreSync() => globalStore;
 
   @override
   Future<GlobalStore> getGlobalStoreUniquely() {
@@ -159,11 +165,21 @@ class TestZulipBinding extends ZulipBinding {
 
   /// The value that `ZulipBinding.instance.launchUrl()` should return.
   ///
-  /// See also [takeLaunchUrlCalls].
+  /// See also:
+  ///   * [launchUrlException]
+  ///   * [takeLaunchUrlCalls]
   bool launchUrlResult = true;
+
+  /// The [PlatformException] that `ZulipBinding.instance.launchUrl()` should throw.
+  ///
+  /// See also:
+  ///   * [launchUrlResult]
+  ///   * [takeLaunchUrlCalls]
+  PlatformException? launchUrlException;
 
   void _resetLaunchUrl() {
     launchUrlResult = true;
+    launchUrlException = null;
     _launchUrlCalls = null;
   }
 
@@ -187,6 +203,22 @@ class TestZulipBinding extends ZulipBinding {
     url_launcher.LaunchMode mode = url_launcher.LaunchMode.platformDefault,
   }) async {
     (_launchUrlCalls ??= []).add((url: url, mode: mode));
+
+    if (!launchUrlResult && launchUrlException != null) {
+      throw FlutterError.fromParts([
+        ErrorSummary(
+          'TestZulipBinding.launchUrl called '
+          'with launchUrlResult: false and non-null launchUrlException'),
+        ErrorHint(
+          'Tests should either set launchUrlResult or launchUrlException, '
+          'but not both.'),
+      ]);
+    }
+
+    if (launchUrlException != null) {
+      throw launchUrlException!;
+    }
+
     return launchUrlResult;
   }
 
@@ -211,6 +243,9 @@ class TestZulipBinding extends ZulipBinding {
   }
 
   @override
+  DateTime utcNow() => clock.now().toUtc();
+
+  @override
   Stopwatch stopwatch() => clock.stopwatch();
 
   /// The value that `ZulipBinding.instance.deviceInfo` should return.
@@ -229,7 +264,7 @@ class TestZulipBinding extends ZulipBinding {
 
   /// The value that `ZulipBinding.instance.packageInfo` should return.
   PackageInfo packageInfoResult = _defaultPackageInfo;
-  static const _defaultPackageInfo = PackageInfo(version: '0.0.1', buildNumber: '1');
+  static final _defaultPackageInfo = eg.packageInfo();
 
   void _resetPackageInfo() {
     packageInfoResult = _defaultPackageInfo;
@@ -277,14 +312,18 @@ class TestZulipBinding extends ZulipBinding {
 
   void _resetNotifications() {
     _androidNotificationHostApi = null;
+    _notificationPigeonApi = null;
   }
 
+  @override
+  FakeAndroidNotificationHostApi get androidNotificationHost =>
+    (_androidNotificationHostApi ??= FakeAndroidNotificationHostApi());
   FakeAndroidNotificationHostApi? _androidNotificationHostApi;
 
   @override
-  FakeAndroidNotificationHostApi get androidNotificationHost {
-    return (_androidNotificationHostApi ??= FakeAndroidNotificationHostApi());
-  }
+  FakeNotificationPigeonApi get notificationPigeonApi =>
+    (_notificationPigeonApi ??= FakeNotificationPigeonApi());
+  FakeNotificationPigeonApi? _notificationPigeonApi;
 
   /// The value that `ZulipBinding.instance.pickFiles()` should return.
   ///
@@ -398,6 +437,7 @@ class FakeFirebaseMessaging extends Fake implements FirebaseMessaging {
     timeSensitive: AppleNotificationSetting.disabled,
     criticalAlert: AppleNotificationSetting.disabled,
     sound: AppleNotificationSetting.enabled,
+    providesAppNotificationSettings: AppleNotificationSetting.disabled,
   );
 
   List<FirebaseMessagingRequestPermissionCall> takeRequestPermissionCalls() {
@@ -416,6 +456,7 @@ class FakeFirebaseMessaging extends Fake implements FirebaseMessaging {
     bool criticalAlert = false,
     bool provisional = false,
     bool sound = true,
+    bool providesAppNotificationSettings = false,
   }) async {
     _requestPermissionCalls.add((
       alert: alert,
@@ -425,6 +466,7 @@ class FakeFirebaseMessaging extends Fake implements FirebaseMessaging {
       criticalAlert: criticalAlert,
       provisional: provisional,
       sound: sound,
+      providesAppNotificationSettings: providesAppNotificationSettings,
     ));
     return requestPermissionResult;
   }
@@ -505,9 +547,24 @@ typedef FirebaseMessagingRequestPermissionCall = ({
   bool criticalAlert,
   bool provisional,
   bool sound,
+  bool providesAppNotificationSettings,
 });
 
 class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
+  // TODO(?): Find a better way to handle this. This member is exported from
+  //   the Pigeon generated class but are not used for this fake class,
+  //   so return the default value.
+  @override
+  // ignore: non_constant_identifier_names
+  final BinaryMessenger? pigeonVar_binaryMessenger = null;
+
+  // TODO(?): Find a better way to handle this. This member is exported from
+  //   the Pigeon generated class but are not used for this fake class,
+  //   so return the default value.
+  @override
+  // ignore: non_constant_identifier_names
+  final String pigeonVar_messageChannelSuffix = '';
+
   /// Lists currently active channels, result is aggregated from calls made to
   /// [createNotificationChannel] and [deleteNotificationChannel],
   /// order of creation is preserved.
@@ -532,7 +589,7 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
   }
 
   @override
-  Future<List<NotificationChannel?>> getNotificationChannels() async {
+  Future<List<NotificationChannel>> getNotificationChannels() async {
     return _activeChannels.values.toList(growable: false);
   }
 
@@ -567,7 +624,7 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
   }
 
   @override
-  Future<List<StoredNotificationSound?>> listStoredSoundsInNotificationsDirectory() async {
+  Future<List<StoredNotificationSound>> listStoredSoundsInNotificationsDirectory() async {
     return _storedNotificationSounds.toList(growable: false);
   }
 
@@ -631,7 +688,7 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
     PendingIntent? contentIntent,
     String? contentText,
     String? contentTitle,
-    Map<String?, String?>? extras,
+    Map<String, String>? extras,
     String? groupKey,
     InboxStyle? inboxStyle,
     bool? isGroupSummary,
@@ -671,7 +728,7 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
             isGroupConversation: messagingStyle.isGroupConversation,
             messages: messagingStyle.messages.map((message) =>
               MessagingStyleMessage(
-                text: message!.text,
+                text: message.text,
                 timestampMs: message.timestampMs,
                 person: Person(
                   key: message.person.key,
@@ -686,14 +743,14 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
     _activeNotificationsMessagingStyle[tag];
 
   @override
-  Future<List<StatusBarNotification?>> getActiveNotifications({required List<String?> desiredExtras}) async {
+  Future<List<StatusBarNotification>> getActiveNotifications({required List<String> desiredExtras}) async {
     return _activeNotifications.values.map((statusNotif) {
       final notificationExtras = statusNotif.notification.extras;
-      statusNotif.notification.extras = Map.fromEntries(
-        desiredExtras
-          .map((key) => MapEntry(key, notificationExtras[key]))
-          .where((entry) => entry.value != null)
-      );
+      statusNotif.notification.extras = {
+        for (final key in desiredExtras)
+          if (notificationExtras[key] != null)
+            key: notificationExtras[key]!,
+      };
       return statusNotif;
     }).toList(growable: false);
   }
@@ -701,6 +758,32 @@ class FakeAndroidNotificationHostApi implements AndroidNotificationHostApi {
   @override
   Future<void> cancel({String? tag, required int id}) async {
     _activeNotifications.remove((id, tag));
+  }
+}
+
+class FakeNotificationPigeonApi implements NotificationPigeonApi {
+  NotificationDataFromLaunch? _notificationDataFromLaunch;
+
+  /// Populates the notification data for launch to be returned
+  /// by [getNotificationDataFromLaunch].
+  void setNotificationDataFromLaunch(NotificationDataFromLaunch? data) {
+    _notificationDataFromLaunch = data;
+  }
+
+  @override
+  Future<NotificationDataFromLaunch?> getNotificationDataFromLaunch() async =>
+    _notificationDataFromLaunch;
+
+  StreamController<NotificationTapEvent>? _notificationTapEventsStreamController;
+
+  void addNotificationTapEvent(NotificationTapEvent event) {
+    _notificationTapEventsStreamController!.add(event);
+  }
+
+  @override
+  Stream<NotificationTapEvent> notificationTapEventsStream() {
+    _notificationTapEventsStreamController ??= StreamController();
+    return _notificationTapEventsStreamController!.stream;
   }
 }
 

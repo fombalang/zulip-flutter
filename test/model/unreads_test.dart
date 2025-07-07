@@ -16,7 +16,7 @@ void main() {
   // These variables are the common state operated on by each test.
   // Each test case calls [prepare] to initialize them.
   late Unreads model;
-  late PerAccountStore channelStore; // TODO reduce this to ChannelStore
+  late PerAccountStore store;
   late int notifiedCount;
 
   void checkNotified({required int count}) {
@@ -37,10 +37,9 @@ void main() {
       oldUnreadsMissing: false,
     ),
   }) {
-    channelStore = eg.store();
+    store = eg.store(initialSnapshot: eg.initialSnapshot(unreadMsgs: initial));
     notifiedCount = 0;
-    model = Unreads(initial: initial,
-        selfUserId: eg.selfUser.userId, channelStore: channelStore)
+    model = store.unreads
       ..addListener(() {
         notifiedCount++;
       });
@@ -49,7 +48,7 @@ void main() {
 
   void fillWithMessages(Iterable<Message> messages) {
     for (final message in messages) {
-      model.handleMessageEvent(MessageEvent(id: 0, message: message));
+      model.handleMessageEvent(eg.messageEvent(message));
     }
     notifiedCount = 0;
   }
@@ -58,7 +57,7 @@ void main() {
     assert(Set.of(messages.map((m) => m.id)).length == messages.length,
       'checkMatchesMessages: duplicate messages in test input');
 
-    final Map<int, Map<String, QueueList<int>>> expectedStreams = {};
+    final Map<int, Map<TopicName, QueueList<int>>> expectedStreams = {};
     final Map<DmNarrow, QueueList<int>> expectedDms = {};
     final Set<int> expectedMentions = {};
     for (final message in messages) {
@@ -114,10 +113,10 @@ void main() {
       prepare(initial: UnreadMessagesSnapshot(
         count: 0,
         channels: [
-          UnreadChannelSnapshot(streamId: stream1.streamId, topic: 'a', unreadMessageIds: [1, 2]),
-          UnreadChannelSnapshot(streamId: stream1.streamId, topic: 'b', unreadMessageIds: [3, 4]),
-          UnreadChannelSnapshot(streamId: stream2.streamId, topic: 'b', unreadMessageIds: [5, 6]),
-          UnreadChannelSnapshot(streamId: stream2.streamId, topic: 'c', unreadMessageIds: [7, 8]),
+          eg.unreadChannelMsgs(streamId: stream1.streamId, topic: 'a', unreadMessageIds: [1, 2]),
+          eg.unreadChannelMsgs(streamId: stream1.streamId, topic: 'b', unreadMessageIds: [3, 4]),
+          eg.unreadChannelMsgs(streamId: stream2.streamId, topic: 'b', unreadMessageIds: [5, 6]),
+          eg.unreadChannelMsgs(streamId: stream2.streamId, topic: 'c', unreadMessageIds: [7, 8]),
         ],
         dms: [
           UnreadDmSnapshot(otherUserId: 1, unreadMessageIds: [9, 10]),
@@ -157,11 +156,11 @@ void main() {
       final stream2 = eg.stream();
       final stream3 = eg.stream();
       prepare();
-      await channelStore.addStreams([stream1, stream2, stream3]);
-      await channelStore.addSubscription(eg.subscription(stream1));
-      await channelStore.addSubscription(eg.subscription(stream2));
-      await channelStore.addSubscription(eg.subscription(stream3, isMuted: true));
-      await channelStore.addUserTopic(stream1, 'a', UserTopicVisibilityPolicy.muted);
+      await store.addStreams([stream1, stream2, stream3]);
+      await store.addSubscription(eg.subscription(stream1));
+      await store.addSubscription(eg.subscription(stream2));
+      await store.addSubscription(eg.subscription(stream3, isMuted: true));
+      await store.addUserTopic(stream1, 'a', UserTopicVisibilityPolicy.muted);
       fillWithMessages([
         eg.streamMessage(stream: stream1, topic: 'a', flags: []),
         eg.streamMessage(stream: stream1, topic: 'b', flags: []),
@@ -177,10 +176,10 @@ void main() {
     test('countInChannel/Narrow', () async {
       final stream = eg.stream();
       prepare();
-      await channelStore.addStream(stream);
-      await channelStore.addSubscription(eg.subscription(stream));
-      await channelStore.addUserTopic(stream, 'a', UserTopicVisibilityPolicy.unmuted);
-      await channelStore.addUserTopic(stream, 'c', UserTopicVisibilityPolicy.muted);
+      await store.addStream(stream);
+      await store.addSubscription(eg.subscription(stream));
+      await store.addUserTopic(stream, 'a', UserTopicVisibilityPolicy.unmuted);
+      await store.addUserTopic(stream, 'c', UserTopicVisibilityPolicy.muted);
       fillWithMessages([
         eg.streamMessage(stream: stream, topic: 'a', flags: []),
         eg.streamMessage(stream: stream, topic: 'a', flags: []),
@@ -192,7 +191,7 @@ void main() {
       check(model.countInChannel      (stream.streamId)).equals(5);
       check(model.countInChannelNarrow(stream.streamId)).equals(5);
 
-      await channelStore.handleEvent(SubscriptionUpdateEvent(id: 1,
+      await store.handleEvent(SubscriptionUpdateEvent(id: 1,
         streamId: stream.streamId,
         property: SubscriptionProperty.isMuted, value: true));
       check(model.countInChannel      (stream.streamId)).equals(2);
@@ -204,7 +203,7 @@ void main() {
       prepare();
       fillWithMessages(List.generate(7, (i) => eg.streamMessage(
         stream: stream, topic: 'a', flags: [])));
-      check(model.countInTopicNarrow(stream.streamId, 'a')).equals(7);
+      check(model.countInTopicNarrow(stream.streamId, eg.t('a'))).equals(7);
     });
 
     test('countInDmNarrow', () {
@@ -219,7 +218,7 @@ void main() {
     test('countInMentionsNarrow', () async {
       final stream = eg.stream();
       prepare();
-      await channelStore.addStream(stream);
+      await store.addStream(stream);
       fillWithMessages([
         eg.streamMessage(stream: stream, flags: []),
         eg.streamMessage(stream: stream, flags: [MessageFlag.mentioned]),
@@ -231,7 +230,7 @@ void main() {
     test('countInStarredMessagesNarrow', () async {
       final stream = eg.stream();
       prepare();
-      await channelStore.addStream(stream);
+      await store.addStream(stream);
       fillWithMessages([
         eg.streamMessage(stream: stream, flags: []),
         eg.streamMessage(stream: stream, flags: [MessageFlag.starred]),
@@ -248,7 +247,7 @@ void main() {
     final unreadChannelMessage = eg.streamMessage(flags: []);
     final readChannelMessage = eg.streamMessage(flags: [MessageFlag.read]);
 
-    final allMessages = [
+    final allMessages = <Message>[
       unreadDmMessage, unreadChannelMessage,
       readDmMessage,   readChannelMessage,
     ];
@@ -315,10 +314,10 @@ void main() {
           if (isDirectMentioned)   MessageFlag.mentioned,
           if (isWildcardMentioned) MessageFlag.wildcardMentioned,
         ];
-        final message = isStream
+        final Message message = isStream
           ? eg.streamMessage(flags: flags)
           : eg.dmMessage(from: eg.otherUser, to: [eg.selfUser], flags: flags);
-        model.handleMessageEvent(MessageEvent(id: 0, message: message));
+        model.handleMessageEvent(eg.messageEvent(message));
         if (isUnread) {
           checkNotifiedOnce();
         }
@@ -346,7 +345,7 @@ void main() {
 
             prepare();
             fillWithMessages([oldMessage]);
-            model.handleMessageEvent(MessageEvent(id: 0, message: newMessage));
+            model.handleMessageEvent(eg.messageEvent(newMessage));
             checkNotifiedOnce();
             checkMatchesMessages([oldMessage, newMessage]);
           });
@@ -369,7 +368,7 @@ void main() {
             final message = eg.dmMessage(from: from, to: to, flags: []);
 
             prepare();
-            model.handleMessageEvent(MessageEvent(id: 0, message: message));
+            model.handleMessageEvent(eg.messageEvent(message));
             checkNotifiedOnce();
             checkMatchesMessages([message]);
           });
@@ -387,7 +386,7 @@ void main() {
             test('existing in $oldDesc narrow; new in ${oldNarrow == newNarrow ? 'same narrow' : 'different narrow ($newDesc)'}', () {
               prepare();
               fillWithMessages([oldMessage]);
-              model.handleMessageEvent(MessageEvent(id: 0, message: newMessage));
+              model.handleMessageEvent(eg.messageEvent(newMessage));
               checkNotifiedOnce();
               checkMatchesMessages([oldMessage, newMessage]);
             });
@@ -402,7 +401,7 @@ void main() {
       for (final isKnownToModel in [true, false]) {
         for (final isRead in [false, true]) {
           final baseFlags = [if (isRead) MessageFlag.read];
-          for (final (messageDesc, message) in [
+          for (final (messageDesc, message) in <(String, Message)>[
             ('stream', eg.streamMessage(flags: baseFlags)),
             ('1:1 dm', eg.dmMessage(from: eg.otherUser, to: [eg.selfUser], flags: baseFlags)),
           ]) {
@@ -469,6 +468,175 @@ void main() {
         }
       }
     });
+
+    group('moves', () {
+      final origChannel = eg.stream();
+      const origTopic = 'origTopic';
+      const newTopic = 'newTopic';
+
+      late List<StreamMessage> readMessages;
+      late List<StreamMessage> unreadMessages;
+
+      Future<void> prepareStore() async {
+        prepare();
+        await store.addStream(origChannel);
+        await store.addSubscription(eg.subscription(origChannel));
+        readMessages  = List<StreamMessage>.generate(10,
+          (_) => eg.streamMessage(stream: origChannel, topic: origTopic,
+                   flags: [MessageFlag.read]));
+        unreadMessages = List<StreamMessage>.generate(10,
+          (_) => eg.streamMessage(stream: origChannel, topic: origTopic));
+      }
+
+      List<StreamMessage> copyMessagesWith(Iterable<StreamMessage> messages, {
+        ZulipStream? newChannel,
+        String? newTopic,
+      }) {
+        assert(newChannel != null || newTopic != null);
+        return messages.map((message) => StreamMessage.fromJson(
+          message.toJson()
+            ..['stream_id'] = newChannel?.streamId ?? message.streamId
+            ..['subject'] = newTopic ?? message.topic
+        )).toList();
+      }
+
+      test('moved messages = unread messages', () async {
+        await prepareStore();
+        final newChannel = eg.stream();
+        await store.addStream(newChannel);
+        await store.addSubscription(eg.subscription(newChannel));
+        fillWithMessages(unreadMessages);
+        final originalMessageIds =
+          model.streams[origChannel.streamId]![TopicName(origTopic)]!;
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: unreadMessages,
+          newStreamId: newChannel.streamId,
+          newTopicStr: newTopic));
+        checkNotifiedOnce();
+        checkMatchesMessages(copyMessagesWith(unreadMessages,
+          newChannel: newChannel, newTopic: newTopic));
+        final newMessageIds =
+          model.streams[newChannel.streamId]![TopicName(newTopic)]!;
+        // Check we successfully avoided making a copy of the list.
+        check(originalMessageIds).identicalTo(newMessageIds);
+      });
+
+      test('moved messages ⊂ read messages', () async {
+        await prepareStore();
+        final messagesToMove = readMessages.take(2).toList();
+        fillWithMessages(unreadMessages + readMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: messagesToMove,
+          newTopicStr: newTopic));
+        checkNotNotified();
+        checkMatchesMessages(unreadMessages);
+      });
+
+      test('moved messages ⊂ unread messages', () async {
+        await prepareStore();
+        final messagesToMove = unreadMessages.take(2).toList();
+        fillWithMessages(unreadMessages + readMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: messagesToMove,
+          newTopicStr: newTopic));
+        checkNotifiedOnce();
+        checkMatchesMessages([
+          ...copyMessagesWith(messagesToMove, newTopic: newTopic),
+          ...unreadMessages.skip(2),
+        ]);
+      });
+
+      test('moved messages ∩ unread messages ≠ Ø, moved messages ∩ read messages ≠ Ø, moved messages ⊅ unread messages', () async {
+        await prepareStore();
+        final messagesToMove = [unreadMessages.first, readMessages.first];
+        fillWithMessages(unreadMessages + readMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: messagesToMove,
+          newTopicStr: newTopic));
+        checkNotifiedOnce();
+        checkMatchesMessages([
+          ...copyMessagesWith(unreadMessages.take(1), newTopic: newTopic),
+          ...unreadMessages.skip(1),
+        ]);
+      });
+
+      test('moved messages ⊃ unread messages', () async {
+        await prepareStore();
+        final messagesToMove = unreadMessages + readMessages.take(2).toList();
+        fillWithMessages(unreadMessages + readMessages);
+        final originalMessageIds =
+          model.streams[origChannel.streamId]![TopicName(origTopic)]!;
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: messagesToMove,
+          newTopicStr: newTopic));
+        checkNotifiedOnce();
+        checkMatchesMessages(copyMessagesWith(unreadMessages, newTopic: newTopic));
+        final newMessageIds =
+          model.streams[origChannel.streamId]![TopicName(newTopic)]!;
+        // Check we successfully avoided making a copy of the list.
+        check(originalMessageIds).identicalTo(newMessageIds);
+      });
+
+      test('moving to unsubscribed channels drops the unreads', () async {
+        await prepareStore();
+        final unsubscribedChannel = eg.stream();
+        await store.addStream(unsubscribedChannel);
+        assert(!store.subscriptions.containsKey(
+          unsubscribedChannel.streamId));
+        fillWithMessages(unreadMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: unreadMessages,
+          newStreamId: unsubscribedChannel.streamId));
+        checkNotifiedOnce();
+        checkMatchesMessages([]);
+      });
+
+      test('tolerates unsorted messages', () async {
+        await prepareStore();
+        final unreadMessages = List.generate(10, (i) =>
+          eg.streamMessage(
+            id: 1000 - i, stream: origChannel, topic: origTopic));
+        fillWithMessages(unreadMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: unreadMessages,
+          newTopicStr: newTopic));
+        checkNotifiedOnce();
+        checkMatchesMessages(copyMessagesWith(unreadMessages, newTopic: newTopic));
+      });
+
+      test('tolerates unreads unknown to the model', () async {
+        await prepareStore();
+        fillWithMessages(unreadMessages);
+
+        final unknownChannel = eg.stream();
+        assert(!store.streams.containsKey(unknownChannel.streamId));
+        final unknownUnreadMessage = eg.streamMessage(
+          stream: unknownChannel, topic: origTopic);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEventMoveFrom(
+          origMessages: [unknownUnreadMessage],
+          newTopicStr: newTopic));
+        checkNotNotified();
+        checkMatchesMessages(unreadMessages);
+      });
+
+      test('message edit but no move', () async {
+        await prepareStore();
+        fillWithMessages(unreadMessages);
+
+        model.handleUpdateMessageEvent(eg.updateMessageEditEvent(
+          unreadMessages.first));
+        checkNotNotified();
+        checkMatchesMessages(unreadMessages);
+      });
+    });
   });
 
 
@@ -493,7 +661,7 @@ void main() {
     final message13 = eg.streamMessage(id: 13, stream: stream2, topic: 'b', flags: []);
     final message14 = eg.streamMessage(id: 14, stream: stream2, topic: 'b', flags: [MessageFlag.mentioned]);
 
-    final messages = [
+    final messages = <Message>[
       message1, message2, message3, message4, message5,
       message6, message7, message8, message9, message10,
       message11, message12, message13, message14,
@@ -538,7 +706,7 @@ void main() {
         messageIds: [11, 12],
         messageType: MessageType.stream,
         streamId: stream1.streamId,
-        topic: 'a',
+        topic: eg.t('a'),
       ));
       checkNotifiedOnce();
       checkMatchesMessages(expectedRemainingMessages..removeAll([message11, message12]));
@@ -547,7 +715,7 @@ void main() {
         messageIds: [13, 14],
         messageType: MessageType.stream,
         streamId: stream2.streamId,
-        topic: 'b',
+        topic: eg.t('b'),
       ));
       checkNotifiedOnce();
       checkMatchesMessages(expectedRemainingMessages..removeAll([message13, message14]));
@@ -680,7 +848,7 @@ void main() {
       // That case is indistinguishable from an unread that's unknown to
       // the model, so we get coverage for that case too.
       test('add flag: ${mentionFlag.name}', () {
-        final messages = [
+        final messages = <Message>[
           eg.streamMessage(flags: []),
           eg.streamMessage(flags: [MessageFlag.read]),
           eg.dmMessage(from: eg.otherUser, to: [eg.selfUser], flags: []),
@@ -717,7 +885,7 @@ void main() {
       // That case is indistinguishable from an unread that's unknown to
       // the model, so we get coverage for that case too.
       test('remove flag: ${mentionFlag.name}', () {
-        final messages = [
+        final messages = <Message>[
           eg.streamMessage(flags: [mentionFlag]),
           eg.streamMessage(flags: [mentionFlag, MessageFlag.read]),
           eg.dmMessage(from: eg.otherUser, to: [eg.selfUser], flags: [mentionFlag]),
@@ -756,7 +924,7 @@ void main() {
       final message2 = eg.streamMessage(id: 2, flags: [MessageFlag.mentioned]);
       final message3 = eg.dmMessage(id: 3, from: eg.otherUser, to: [eg.selfUser], flags: []);
       final message4 = eg.dmMessage(id: 4, from: eg.otherUser, to: [eg.selfUser], flags: [MessageFlag.wildcardMentioned]);
-      final messages = [message1, message2, message3, message4];
+      final messages = <Message>[message1, message2, message3, message4];
 
       prepare();
       fillWithMessages([message1, message2, message3, message4]);
@@ -805,7 +973,7 @@ void main() {
         final message13 = eg.streamMessage(id: 13, stream: stream2, topic: 'b', flags: []);
         final message14 = eg.streamMessage(id: 14, stream: stream2, topic: 'b', flags: [MessageFlag.mentioned]);
 
-        final messages = [
+        final messages = <Message>[
           message1, message2, message3, message4, message5,
           message6, message7, message8, message9, message10,
           message11, message12, message13, message14,
@@ -917,7 +1085,7 @@ void main() {
         final message13 = eg.streamMessage(id: 13, stream: stream2, topic: 'b', flags: [MessageFlag.read]);
         final message14 = eg.streamMessage(id: 14, stream: stream2, topic: 'b', flags: [MessageFlag.mentioned, MessageFlag.read]);
 
-        final messages = [
+        final messages = <Message>[
           message1, message2, message3, message4, message5,
           message6, message7, message8, message9, message10,
           message11, message12, message13, message14,
@@ -1029,7 +1197,7 @@ void main() {
                 type: MessageType.stream,
                 mentioned: false,
                 streamId: stream.streamId,
-                topic: topic,
+                topic: eg.t(topic),
                 userIds: null,
               ),
               // message 2 and 3 have their details missing

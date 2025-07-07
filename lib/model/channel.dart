@@ -41,7 +41,7 @@ mixin ChannelStore {
   ///
   /// For policies directly applicable in the UI, see
   /// [isTopicVisibleInStream] and [isTopicVisible].
-  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, String topic);
+  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, TopicName topic);
 
   /// The raw data structure underlying [topicVisibilityPolicy].
   ///
@@ -51,7 +51,7 @@ mixin ChannelStore {
   /// and on the other hand being a concrete, finite data structure that
   /// can be compared using `deepEquals`.
   @visibleForTesting
-  Map<int, Map<String, UserTopicVisibilityPolicy>> get debugTopicVisibility;
+  Map<int, Map<TopicName, UserTopicVisibilityPolicy>> get debugTopicVisibility;
 
   /// Whether this topic should appear when already focusing on its stream.
   ///
@@ -63,7 +63,7 @@ mixin ChannelStore {
   ///
   /// For UI contexts that are not specific to a particular stream, see
   /// [isTopicVisible].
-  bool isTopicVisibleInStream(int streamId, String topic) {
+  bool isTopicVisibleInStream(int streamId, TopicName topic) {
     return _isTopicVisibleInStream(topicVisibilityPolicy(streamId, topic));
   }
 
@@ -100,7 +100,7 @@ mixin ChannelStore {
   ///
   /// For UI contexts that are specific to a particular stream, see
   /// [isTopicVisibleInStream].
-  bool isTopicVisible(int streamId, String topic) {
+  bool isTopicVisible(int streamId, TopicName topic) {
     return _isTopicVisible(streamId, topicVisibilityPolicy(streamId, topic));
   }
 
@@ -171,7 +171,7 @@ class ChannelStoreImpl with ChannelStore {
       streams.putIfAbsent(stream.streamId, () => stream);
     }
 
-    final topicVisibility = <int, Map<String, UserTopicVisibilityPolicy>>{};
+    final topicVisibility = <int, Map<TopicName, UserTopicVisibilityPolicy>>{};
     for (final item in initialSnapshot.userTopics ?? const <UserTopicItem>[]) {
       if (_warnInvalidVisibilityPolicy(item.visibilityPolicy)) {
         // Not a value we expect. Keep it out of our data structures. // TODO(log)
@@ -204,12 +204,12 @@ class ChannelStoreImpl with ChannelStore {
   final Map<int, Subscription> subscriptions;
 
   @override
-  Map<int, Map<String, UserTopicVisibilityPolicy>> get debugTopicVisibility => topicVisibility;
+  Map<int, Map<TopicName, UserTopicVisibilityPolicy>> get debugTopicVisibility => topicVisibility;
 
-  final Map<int, Map<String, UserTopicVisibilityPolicy>> topicVisibility;
+  final Map<int, Map<TopicName, UserTopicVisibilityPolicy>> topicVisibility;
 
   @override
-  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, String topic) {
+  UserTopicVisibilityPolicy topicVisibilityPolicy(int streamId, TopicName topic) {
     return topicVisibility[streamId]?[topic] ?? UserTopicVisibilityPolicy.none;
   }
 
@@ -301,7 +301,16 @@ class ChannelStoreImpl with ChannelStore {
 
       case SubscriptionRemoveEvent():
         for (final streamId in event.streamIds) {
-          subscriptions.remove(streamId);
+          assert(streams.containsKey(streamId));
+          assert(streams[streamId] is Subscription);
+          assert(streamsByName.containsKey(streams[streamId]!.name));
+          assert(streamsByName[streams[streamId]!.name] is Subscription);
+          assert(subscriptions.containsKey(streamId));
+          final subscription = subscriptions.remove(streamId);
+          if (subscription == null) continue; // TODO(log)
+          final stream = ZulipStream.fromSubscription(subscription);
+          streams[streamId] = stream;
+          streamsByName[subscription.name] = stream;
         }
 
       case SubscriptionUpdateEvent():
@@ -313,7 +322,7 @@ class ChannelStoreImpl with ChannelStore {
           case SubscriptionProperty.color:
             subscription.color                  = event.value as int;
           case SubscriptionProperty.isMuted:
-            // TODO(#421) update [MessageListView] if affected
+            // TODO(#1255) update [MessageListView] if affected
             subscription.isMuted                = event.value as bool;
           case SubscriptionProperty.inHomeView:
             subscription.isMuted                = !(event.value as bool);
@@ -345,7 +354,6 @@ class ChannelStoreImpl with ChannelStore {
     if (_warnInvalidVisibilityPolicy(visibilityPolicy)) {
       visibilityPolicy = UserTopicVisibilityPolicy.none;
     }
-    // TODO(#421) update [MessageListView] if affected
     if (visibilityPolicy == UserTopicVisibilityPolicy.none) {
       // This is the "zero value" for this type, which our data structure
       // represents by leaving the topic out entirely.

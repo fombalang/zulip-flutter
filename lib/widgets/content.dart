@@ -4,9 +4,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 import 'package:html/dom.dart' as dom;
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' as intl;
 
 import '../api/core.dart';
 import '../api/model/model.dart';
@@ -15,14 +15,20 @@ import '../model/avatar_url.dart';
 import '../model/binding.dart';
 import '../model/content.dart';
 import '../model/internal_link.dart';
+import '../model/katex.dart';
+import '../model/presence.dart';
+import 'actions.dart';
 import 'code_block.dart';
 import 'dialog.dart';
 import 'icons.dart';
+import 'inset_shadow.dart';
 import 'lightbox.dart';
 import 'message_list.dart';
 import 'poll.dart';
+import 'scrolling.dart';
 import 'store.dart';
 import 'text.dart';
+import 'theme.dart';
 
 /// A central place for styles for Zulip content (rendered Zulip Markdown).
 ///
@@ -42,6 +48,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
       colorDirectMentionBackground: const HSLColor.fromAHSL(0.2, 240, 0.7, 0.7).toColor(),
       colorGlobalTimeBackground: const HSLColor.fromAHSL(1, 0, 0, 0.93).toColor(),
       colorGlobalTimeBorder: const HSLColor.fromAHSL(1, 0, 0, 0.8).toColor(),
+      colorLink: const HSLColor.fromAHSL(1, 200, 1, 0.4).toColor(),
       colorMathBlockBorder: const HSLColor.fromAHSL(0.15, 240, 0.8, 0.5).toColor(),
       colorMessageMediaContainerBackground: const Color.fromRGBO(0, 0, 0, 0.03),
       colorPollNames: const HSLColor.fromAHSL(1, 0, 0, .45).toColor(),
@@ -75,6 +82,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
       colorDirectMentionBackground: const HSLColor.fromAHSL(0.25, 240, 0.52, 0.6).toColor(),
       colorGlobalTimeBackground: const HSLColor.fromAHSL(0.2, 0, 0, 0).toColor(),
       colorGlobalTimeBorder: const HSLColor.fromAHSL(0.4, 0, 0, 0).toColor(),
+      colorLink: const HSLColor.fromAHSL(1, 200, 1, 0.4).toColor(), // the same as light in Web
       colorMathBlockBorder: const HSLColor.fromAHSL(1, 240, 0.4, 0.4).toColor(),
       colorMessageMediaContainerBackground: const HSLColor.fromAHSL(0.03, 0, 0, 1).toColor(),
       colorPollNames: const HSLColor.fromAHSL(1, 236, .15, .7).toColor(),
@@ -107,6 +115,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
     required this.colorDirectMentionBackground,
     required this.colorGlobalTimeBackground,
     required this.colorGlobalTimeBorder,
+    required this.colorLink,
     required this.colorMathBlockBorder,
     required this.colorMessageMediaContainerBackground,
     required this.colorPollNames,
@@ -139,6 +148,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
   final Color colorDirectMentionBackground;
   final Color colorGlobalTimeBackground;
   final Color colorGlobalTimeBorder;
+  final Color colorLink;
   final Color colorMathBlockBorder; // TODO(#46) this won't be needed
   final Color colorMessageMediaContainerBackground;
   final Color colorPollNames;
@@ -199,6 +209,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
     Color? colorDirectMentionBackground,
     Color? colorGlobalTimeBackground,
     Color? colorGlobalTimeBorder,
+    Color? colorLink,
     Color? colorMathBlockBorder,
     Color? colorMessageMediaContainerBackground,
     Color? colorPollNames,
@@ -221,6 +232,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
       colorDirectMentionBackground: colorDirectMentionBackground ?? this.colorDirectMentionBackground,
       colorGlobalTimeBackground: colorGlobalTimeBackground ?? this.colorGlobalTimeBackground,
       colorGlobalTimeBorder: colorGlobalTimeBorder ?? this.colorGlobalTimeBorder,
+      colorLink: colorLink ?? this.colorLink,
       colorMathBlockBorder: colorMathBlockBorder ?? this.colorMathBlockBorder,
       colorMessageMediaContainerBackground: colorMessageMediaContainerBackground ?? this.colorMessageMediaContainerBackground,
       colorPollNames: colorPollNames ?? this.colorPollNames,
@@ -250,6 +262,7 @@ class ContentTheme extends ThemeExtension<ContentTheme> {
       colorDirectMentionBackground: Color.lerp(colorDirectMentionBackground, other.colorDirectMentionBackground, t)!,
       colorGlobalTimeBackground: Color.lerp(colorGlobalTimeBackground, other.colorGlobalTimeBackground, t)!,
       colorGlobalTimeBorder: Color.lerp(colorGlobalTimeBorder, other.colorGlobalTimeBorder, t)!,
+      colorLink: Color.lerp(colorLink, other.colorLink, t)!,
       colorMathBlockBorder: Color.lerp(colorMathBlockBorder, other.colorMathBlockBorder, t)!,
       colorMessageMediaContainerBackground: Color.lerp(colorMessageMediaContainerBackground, other.colorMessageMediaContainerBackground, t)!,
       colorPollNames: Color.lerp(colorPollNames, other.colorPollNames, t)!,
@@ -364,6 +377,7 @@ class BlockContentList extends StatelessWidget {
             );
             return const SizedBox.shrink();
           }(),
+          WebsitePreviewNode() => WebsitePreview(node: node),
           UnimplementedBlockContentNode() =>
             Text.rich(_errorUnimplemented(node, context: context)),
         };
@@ -482,7 +496,7 @@ class ListNodeWidget extends StatelessWidget {
     final items = List.generate(node.items.length, (index) {
       final item = node.items[index];
       String marker;
-      switch (node.style) {
+      switch (node) {
         // TODO(#161): different unordered marker styles at different levels of nesting
         //   see:
         //     https://html.spec.whatwg.org/multipage/rendering.html#lists
@@ -490,37 +504,27 @@ class ListNodeWidget extends StatelessWidget {
         // TODO proper alignment of unordered marker; should be "• ", one space,
         //   but that comes out too close to item; not sure what's fixing that
         //   in a browser
-        case ListStyle.unordered: marker = "•   "; break;
-        // TODO(#59) ordered lists starting not at 1
-        case ListStyle.ordered: marker = "${index+1}. "; break;
+        case UnorderedListNode(): marker = "•   "; break;
+        case OrderedListNode(:final start): marker = "${start + index}. "; break;
       }
-      return ListItemWidget(marker: marker, nodes: item);
+      return TableRow(children: [
+        Align(
+          alignment: AlignmentDirectional.topEnd,
+          child: Text(marker)),
+        BlockContentList(nodes: item),
+      ]);
     });
+
     return Padding(
       padding: const EdgeInsets.only(top: 2, bottom: 5),
-      child: Column(children: items));
-  }
-}
-
-class ListItemWidget extends StatelessWidget {
-  const ListItemWidget({super.key, required this.marker, required this.nodes});
-
-  final String marker;
-  final List<BlockContentNode> nodes;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: localizedTextBaseline(context),
-      children: [
-        SizedBox(
-          width: 20, // TODO handle long numbers in <ol>, like https://github.com/zulip/zulip/pull/25063
-          child: Align(
-            alignment: AlignmentDirectional.topEnd, child: Text(marker))),
-        Expanded(child: BlockContentList(nodes: nodes)),
-      ]);
+      child: Table(
+        defaultVerticalAlignment: TableCellVerticalAlignment.baseline,
+        textBaseline: localizedTextBaseline(context),
+        columnWidths: const <int, TableColumnWidth>{
+          0: IntrinsicColumnWidth(),
+          1: FlexColumnWidth(),
+        },
+        children: items));
   }
 }
 
@@ -650,6 +654,7 @@ class MessageImage extends StatelessWidget {
         Navigator.of(context).push(getImageLightboxRoute(
           context: context,
           message: message,
+          messageImageContext: context,
           src: resolvedSrcUrl,
           thumbnailUrl: resolvedThumbnailUrl,
           originalWidth: node.originalWidth,
@@ -658,7 +663,7 @@ class MessageImage extends StatelessWidget {
       child: node.loading
         ? const CupertinoActivityIndicator()
         : resolvedSrcUrl == null ? null : LightboxHero(
-            message: message,
+            messageImageContext: context,
             src: resolvedSrcUrl,
             child: RealmContentNetworkImage(
               resolvedThumbnailUrl ?? resolvedSrcUrl,
@@ -797,33 +802,6 @@ class _CodeBlockContainer extends StatelessWidget {
   }
 }
 
-class SingleChildScrollViewWithScrollbar extends StatefulWidget {
-  const SingleChildScrollViewWithScrollbar(
-    {super.key, required this.scrollDirection, required this.child});
-
-  final Axis scrollDirection;
-  final Widget child;
-
-  @override
-  State<SingleChildScrollViewWithScrollbar> createState() =>
-    _SingleChildScrollViewWithScrollbarState();
-}
-
-class _SingleChildScrollViewWithScrollbarState
-    extends State<SingleChildScrollViewWithScrollbar> {
-  final ScrollController controller = ScrollController();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scrollbar(
-      controller: controller,
-      child: SingleChildScrollView(
-        controller: controller,
-        scrollDirection: widget.scrollDirection,
-        child: widget.child));
-  }
-}
-
 class MathBlock extends StatelessWidget {
   const MathBlock({super.key, required this.node});
 
@@ -831,11 +809,245 @@ class MathBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _CodeBlockContainer(
-      borderColor: ContentTheme.of(context).colorMathBlockBorder,
-      child: Text.rich(TextSpan(
-        style: ContentTheme.of(context).codeBlockTextStyles.plain,
-        children: [TextSpan(text: node.texSource)])));
+    final contentTheme = ContentTheme.of(context);
+
+    final nodes = node.nodes;
+    if (nodes == null) {
+      return _CodeBlockContainer(
+        borderColor: contentTheme.colorMathBlockBorder,
+        child: Text.rich(TextSpan(
+          style: contentTheme.codeBlockTextStyles.plain,
+          children: [TextSpan(text: node.texSource)])));
+    }
+
+    return _Katex(inline: false, nodes: nodes);
+  }
+}
+
+// Base text style from .katex class in katex.scss :
+//   https://github.com/KaTeX/KaTeX/blob/613c3da8/src/styles/katex.scss#L13-L15
+const kBaseKatexTextStyle = TextStyle(
+  fontSize: kBaseFontSize * 1.21,
+  fontFamily: 'KaTeX_Main',
+  height: 1.2);
+
+class _Katex extends StatelessWidget {
+  const _Katex({
+    required this.inline,
+    required this.nodes,
+  });
+
+  final bool inline;
+  final List<KatexNode> nodes;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget widget = _KatexNodeList(nodes: nodes);
+
+    if (!inline) {
+      widget = Center(
+        child: SingleChildScrollViewWithScrollbar(
+          scrollDirection: Axis.horizontal,
+          child: widget));
+    }
+
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: DefaultTextStyle(
+        style: kBaseKatexTextStyle.copyWith(
+          color: ContentTheme.of(context).textStylePlainParagraph.color),
+        child: widget));
+  }
+}
+
+class _KatexNodeList extends StatelessWidget {
+  const _KatexNodeList({required this.nodes});
+
+  final List<KatexNode> nodes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(TextSpan(
+      children: List.unmodifiable(nodes.map((e) {
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: switch (e) {
+            KatexSpanNode() => _KatexSpan(e),
+          });
+      }))));
+  }
+}
+
+class _KatexSpan extends StatelessWidget {
+  const _KatexSpan(this.node);
+
+  final KatexSpanNode node;
+
+  @override
+  Widget build(BuildContext context) {
+    final em = DefaultTextStyle.of(context).style.fontSize!;
+
+    Widget widget = const SizedBox.shrink();
+    if (node.text != null) {
+      widget = Text(node.text!);
+    } else if (node.nodes != null && node.nodes!.isNotEmpty) {
+      widget = _KatexNodeList(nodes: node.nodes!);
+    }
+
+    final styles = node.styles;
+
+    final fontFamily = styles.fontFamily;
+    final fontSize = switch (styles.fontSizeEm) {
+      double fontSizeEm => fontSizeEm * em,
+      null => null,
+    };
+    final fontWeight = switch (styles.fontWeight) {
+      KatexSpanFontWeight.bold => FontWeight.bold,
+      null => null,
+    };
+    var fontStyle = switch (styles.fontStyle) {
+      KatexSpanFontStyle.normal => FontStyle.normal,
+      KatexSpanFontStyle.italic => FontStyle.italic,
+      null => null,
+    };
+
+    TextStyle? textStyle;
+    if (fontFamily != null ||
+        fontSize != null ||
+        fontWeight != null ||
+        fontStyle != null) {
+      // TODO(upstream) remove this workaround when upstream fixes the broken
+      //   rendering of KaTeX_Math font with italic font style on Android:
+      //     https://github.com/flutter/flutter/issues/167474
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          fontFamily == 'KaTeX_Math') {
+        fontStyle = FontStyle.normal;
+      }
+
+      textStyle = TextStyle(
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+      );
+    }
+    final textAlign = switch (styles.textAlign) {
+      KatexSpanTextAlign.left => TextAlign.left,
+      KatexSpanTextAlign.center => TextAlign.center,
+      KatexSpanTextAlign.right => TextAlign.right,
+      null => null,
+    };
+
+    if (textStyle != null || textAlign != null) {
+      widget = DefaultTextStyle.merge(
+        style: textStyle,
+        textAlign: textAlign,
+        child: widget);
+    }
+
+    return SizedBox(
+      height: styles.heightEm != null
+        ? styles.heightEm! * (fontSize ?? em)
+        : null,
+      child: widget);
+  }
+}
+
+class WebsitePreview extends StatelessWidget {
+  const WebsitePreview({super.key, required this.node});
+
+  final WebsitePreviewNode node;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = PerAccountStoreWidget.of(context);
+    final resolvedImageSrcUrl = store.tryResolveUrl(node.imageSrcUrl);
+    final isSmallWidth = MediaQuery.sizeOf(context).width <= 576;
+
+    // On Web on larger width viewports, the title and description container's
+    // width is constrained using `max-width: calc(100% - 115px)`, we do not
+    // follow the same here for potential benefits listed here:
+    //   https://github.com/zulip/zulip-flutter/pull/1049#discussion_r1915740997
+    final titleAndDescription = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (node.title != null)
+          GestureDetector(
+            onTap: () => _launchUrl(context, node.hrefUrl),
+            child: Text(node.title!,
+              style: TextStyle(
+                fontSize: 1.2 * kBaseFontSize,
+                // Web uses `line-height: normal` for title. MDN docs for it:
+                //   https://developer.mozilla.org/en-US/docs/Web/CSS/line-height#normal
+                // says actual value depends on user-agent, and default value
+                // can be roughly 1.2 (unitless). So, use the same here.
+                height: 1.2,
+                color: ContentTheme.of(context).colorLink))),
+        if (node.description != null)
+          Container(
+            padding: const EdgeInsets.only(top: 3),
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: Text(node.description!)),
+      ]);
+
+    final clippedTitleAndDescription = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: InsetShadowBox(
+        bottom: 8,
+        // TODO(#488) use different color for non-message contexts
+        // TODO(#647) use different color for highlighted messages
+        // TODO(#681) use different color for DM messages
+        color: DesignVariables.of(context).bgMessageRegular,
+        child: ClipRect(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: 80),
+            child: OverflowBox(
+              maxHeight: double.infinity,
+              alignment: AlignmentDirectional.topStart,
+              fit: OverflowBoxFit.deferToChild,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: titleAndDescription))))));
+
+    final image = resolvedImageSrcUrl == null ? null
+      : GestureDetector(
+          onTap: () => _launchUrl(context, node.hrefUrl),
+          child: RealmContentNetworkImage(
+            resolvedImageSrcUrl,
+            fit: BoxFit.cover));
+
+    final result = isSmallWidth
+      ? Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 15,
+          children: [
+            if (image != null)
+              SizedBox(height: 110, width: double.infinity, child: image),
+            clippedTitleAndDescription,
+          ])
+      : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (image != null)
+            SizedBox.square(dimension: 80, child: image),
+          Flexible(child: clippedTitleAndDescription),
+        ]);
+
+    return Padding(
+      // TODO(?) Web has a bottom margin `--markdown-interelement-space-px`
+      //   around the `message_embed` container, which is calculated here:
+      //     https://github.com/zulip/zulip/blob/d28f7d86223bab4f11629637d4237381943f6fc1/web/src/information_density.ts#L80-L102
+      //   But for now we use a static value of 6.72px instead which is the
+      //   default in the web client, see discussion:
+      //     https://github.com/zulip/zulip-flutter/pull/1049#discussion_r1915747908
+      padding: const EdgeInsets.only(bottom: 6.72),
+      child: Container(
+        height: !isSmallWidth ? 90 : null,
+        decoration: const BoxDecoration(
+          border: BorderDirectional(start: BorderSide(
+            // Web has the same color in light and dark mode.
+            color: Color(0xffededed), width: 3))),
+        padding: const EdgeInsets.all(5),
+        child: result));
   }
 }
 
@@ -1029,8 +1241,7 @@ class _InlineContentBuilder {
         assert(recognizer != null);
         _pushRecognizer(recognizer);
         final result = _buildNodes(node.nodes,
-          // Web has the same color in light and dark mode.
-          style: TextStyle(color: const HSLColor.fromAHSL(1, 200, 1, 0.4).toColor()));
+          style: TextStyle(color: ContentTheme.of(_context!).colorLink));
         _popRecognizer();
         return result;
 
@@ -1051,11 +1262,17 @@ class _InlineContentBuilder {
           child: MessageImageEmoji(node: node));
 
       case MathInlineNode():
-        return TextSpan(
-          style: widget.style
-            .merge(ContentTheme.of(_context!).textStyleInlineMath)
-            .apply(fontSizeFactor: kInlineCodeFontSizeFactor),
-          children: [TextSpan(text: node.texSource)]);
+        final nodes = node.nodes;
+        return nodes == null
+          ? TextSpan(
+              style: widget.style
+                .merge(ContentTheme.of(_context!).textStyleInlineMath)
+                .apply(fontSizeFactor: kInlineCodeFontSizeFactor),
+              children: [TextSpan(text: node.texSource)])
+          : WidgetSpan(
+              alignment: PlaceholderAlignment.baseline,
+              baseline: TextBaseline.alphabetic,
+              child: _Katex(inline: true, nodes: nodes));
 
       case GlobalTimeNode():
         return WidgetSpan(alignment: PlaceholderAlignment.middle,
@@ -1214,7 +1431,7 @@ class GlobalTime extends StatelessWidget {
   final GlobalTimeNode node;
   final TextStyle ambientTextStyle;
 
-  static final _dateFormat = DateFormat('EEE, MMM d, y, h:mm a'); // TODO(intl): localize date
+  static final _dateFormat = intl.DateFormat('EEE, MMM d, y, h:mm a'); // TODO(i18n): localize date
 
   @override
   Widget build(BuildContext context) {
@@ -1318,48 +1535,27 @@ class MessageTableCell extends StatelessWidget {
 }
 
 void _launchUrl(BuildContext context, String urlString) async {
-  DialogStatus showError(BuildContext context, String? message) {
-    return showErrorDialog(context: context,
-      title: 'Unable to open link',
-      message: [
-        'Link could not be opened: $urlString',
-        if (message != null) message,
-      ].join("\n\n"));
-  }
-
   final store = PerAccountStoreWidget.of(context);
   final url = store.tryResolveUrl(urlString);
   if (url == null) { // TODO(log)
-    showError(context, null);
+    final zulipLocalizations = ZulipLocalizations.of(context);
+    showErrorDialog(context: context,
+      title: zulipLocalizations.errorCouldNotOpenLinkTitle,
+      message: zulipLocalizations.errorCouldNotOpenLink(urlString));
     return;
   }
 
-  final internalNarrow = parseInternalLink(url, store);
-  if (internalNarrow != null) {
-    unawaited(Navigator.push(context,
-      MessageListPage.buildRoute(context: context,
-        narrow: internalNarrow)));
-    return;
-  }
+  final internalLink = parseInternalLink(url, store);
+  assert(internalLink == null || internalLink.realmUrl == store.realmUrl);
+  switch (internalLink) {
+    case NarrowLink():
+      unawaited(Navigator.push(context,
+        MessageListPage.buildRoute(context: context,
+          narrow: internalLink.narrow,
+          initAnchorMessageId: internalLink.nearMessageId)));
 
-  bool launched = false;
-  String? errorMessage;
-  try {
-    launched = await ZulipBinding.instance.launchUrl(url,
-      mode: switch (defaultTargetPlatform) {
-        // On iOS we prefer LaunchMode.externalApplication because (for
-        // HTTP URLs) LaunchMode.platformDefault uses SFSafariViewController,
-        // which gives an awkward UX as described here:
-        //  https://chat.zulip.org/#narrow/stream/48-mobile/topic/in-app.20browser/near/1169118
-        TargetPlatform.iOS => UrlLaunchMode.externalApplication,
-        _ => UrlLaunchMode.platformDefault,
-      });
-  } on PlatformException catch (e) {
-    errorMessage = e.message;
-  }
-  if (!launched) { // TODO(log)
-    if (!context.mounted) return;
-    showError(context, errorMessage);
+    case null:
+      await PlatformActions.launchUrl(context, url);
   }
 }
 
@@ -1475,18 +1671,29 @@ class Avatar extends StatelessWidget {
     required this.userId,
     required this.size,
     required this.borderRadius,
+    this.backgroundColor,
+    this.showPresence = true,
+    this.replaceIfMuted = true,
   });
 
   final int userId;
   final double size;
   final double borderRadius;
+  final Color? backgroundColor;
+  final bool showPresence;
+  final bool replaceIfMuted;
 
   @override
   Widget build(BuildContext context) {
+    // (The backgroundColor is only meaningful if presence will be shown;
+    // see [PresenceCircle.backgroundColor].)
+    assert(backgroundColor == null || showPresence);
     return AvatarShape(
       size: size,
       borderRadius: borderRadius,
-      child: AvatarImage(userId: userId, size: size));
+      backgroundColor: backgroundColor,
+      userIdForPresence: showPresence ? userId : null,
+      child: AvatarImage(userId: userId, size: size, replaceIfMuted: replaceIfMuted));
   }
 }
 
@@ -1500,18 +1707,24 @@ class AvatarImage extends StatelessWidget {
     super.key,
     required this.userId,
     required this.size,
+    this.replaceIfMuted = true,
   });
 
   final int userId;
   final double size;
+  final bool replaceIfMuted;
 
   @override
   Widget build(BuildContext context) {
     final store = PerAccountStoreWidget.of(context);
-    final user = store.users[userId];
+    final user = store.getUser(userId);
 
     if (user == null) { // TODO(log)
       return const SizedBox.shrink();
+    }
+
+    if (replaceIfMuted && store.isUserMuted(userId)) {
+      return _AvatarPlaceholder(size: size);
     }
 
     final resolvedUrl = switch (user.avatarUrl) {
@@ -1534,27 +1747,196 @@ class AvatarImage extends StatelessWidget {
   }
 }
 
+/// A placeholder avatar for muted users.
+///
+/// Wrap this with [AvatarShape].
+// TODO(#1558) use this as a fallback in more places (?) and update dartdoc.
+class _AvatarPlaceholder extends StatelessWidget {
+  const _AvatarPlaceholder({required this.size});
+
+  /// The size of the placeholder box.
+  ///
+  /// This should match the `size` passed to the wrapping [AvatarShape].
+  /// The placeholder's icon will be scaled proportionally to this.
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final designVariables = DesignVariables.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(color: designVariables.avatarPlaceholderBg),
+      child: Icon(ZulipIcons.person,
+        // Where the avatar placeholder appears in the Figma,
+        // this is how the icon is sized proportionally to its box.
+        size: size * 20 / 32,
+        color: designVariables.avatarPlaceholderIcon));
+  }
+}
+
 /// A rounded square shape, to wrap an [AvatarImage] or similar.
+///
+/// If [userIdForPresence] is provided, this will paint a [PresenceCircle]
+/// on the shape.
 class AvatarShape extends StatelessWidget {
   const AvatarShape({
     super.key,
     required this.size,
     required this.borderRadius,
+    this.backgroundColor,
+    this.userIdForPresence,
     required this.child,
   });
 
   final double size;
   final double borderRadius;
+  final Color? backgroundColor;
+  final int? userIdForPresence;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox.square(
+    // (The backgroundColor is only meaningful if presence will be shown;
+    // see [PresenceCircle.backgroundColor].)
+    assert(backgroundColor == null || userIdForPresence != null);
+
+    Widget result = SizedBox.square(
       dimension: size,
       child: ClipRRect(
         borderRadius: BorderRadius.all(Radius.circular(borderRadius)),
         clipBehavior: Clip.antiAlias,
         child: child));
+
+    if (userIdForPresence != null) {
+      final presenceCircleSize = size / 4; // TODO(design) is this right?
+      result = Stack(children: [
+        result,
+        Positioned.directional(textDirection: Directionality.of(context),
+          end: 0,
+          bottom: 0,
+          child: PresenceCircle(
+            userId: userIdForPresence!,
+            size: presenceCircleSize,
+            backgroundColor: backgroundColor)),
+      ]);
+    }
+
+    return result;
+  }
+}
+
+/// The green or orange-gradient circle representing [PresenceStatus].
+///
+/// [backgroundColor] must not be [Colors.transparent].
+/// It exists to match the background on which the avatar image is painted.
+/// If [backgroundColor] is not passed, [DesignVariables.mainBackground] is used.
+///
+/// By default, nothing paints for a user in the "offline" status
+/// (i.e. a user without a [PresenceStatus]).
+/// Pass true for [explicitOffline] to paint a gray circle.
+class PresenceCircle extends StatefulWidget {
+  const PresenceCircle({
+    super.key,
+    required this.userId,
+    required this.size,
+    this.backgroundColor,
+    this.explicitOffline = false,
+  });
+
+  final int userId;
+  final double size;
+  final Color? backgroundColor;
+  final bool explicitOffline;
+
+  /// Creates a [WidgetSpan] with a [PresenceCircle], for use in rich text
+  /// before a user's name.
+  ///
+  /// The [PresenceCircle] will have `explicitOffline: true`.
+  static InlineSpan asWidgetSpan({
+    required int userId,
+    required double fontSize,
+    required TextScaler textScaler,
+    Color? backgroundColor,
+  }) {
+    final size = textScaler.scale(fontSize) / 2;
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(end: 4),
+        child: PresenceCircle(
+          userId: userId,
+          size: size,
+          backgroundColor: backgroundColor,
+          explicitOffline: true)));
+  }
+
+  @override
+  State<PresenceCircle> createState() => _PresenceCircleState();
+}
+
+class _PresenceCircleState extends State<PresenceCircle> with PerAccountStoreAwareStateMixin {
+  Presence? model;
+
+  @override
+  void onNewStore() {
+    model?.removeListener(_modelChanged);
+    model = PerAccountStoreWidget.of(context).presence
+      ..addListener(_modelChanged);
+  }
+
+  @override
+  void dispose() {
+    model!.removeListener(_modelChanged);
+    super.dispose();
+  }
+
+  void _modelChanged() {
+    setState(() {
+      // The actual state lives in [model].
+      // This method was called because that just changed.
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = model!.presenceStatusForUser(
+      widget.userId, utcNow: ZulipBinding.instance.utcNow());
+    final designVariables = DesignVariables.of(context);
+    final effectiveBackgroundColor = widget.backgroundColor ?? designVariables.mainBackground;
+    assert(effectiveBackgroundColor != Colors.transparent);
+
+    Color? color;
+    LinearGradient? gradient;
+    switch (status) {
+      case null:
+        if (widget.explicitOffline) {
+          // TODO(a11y) this should be an open circle, like on web,
+          //   to differentiate by shape (vs. the "active" status which is also
+          //   a solid circle)
+          color = designVariables.statusAway;
+        } else {
+          return SizedBox.square(dimension: widget.size);
+        }
+      case PresenceStatus.active:
+        color = designVariables.statusOnline;
+      case PresenceStatus.idle:
+        gradient = LinearGradient(
+          begin: AlignmentDirectional.centerStart,
+          end: AlignmentDirectional.centerEnd,
+          colors: [designVariables.statusIdle, effectiveBackgroundColor],
+          stops: [0.05, 1.00],
+        );
+    }
+
+    return SizedBox.square(dimension: widget.size,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: effectiveBackgroundColor,
+            width: 2,
+            strokeAlign: BorderSide.strokeAlignOutside),
+          color: color,
+          gradient: gradient,
+          shape: BoxShape.circle)));
   }
 }
 
@@ -1570,6 +1952,7 @@ InlineSpan _errorUnimplemented(UnimplementedNode node, {required BuildContext co
   // because release mode isn't yet about general users but developer demos,
   // and we want to keep the demos honest.
   // TODO(#194) think through UX for general release
+  // TODO(#1285) translate this
   final htmlNode = node.htmlNode;
   if (htmlNode is dom.Element) {
     return TextSpan(children: [

@@ -70,7 +70,7 @@ void main() {
 
     for (final message in unreadMessages) {
       assert(!message.flags.contains(MessageFlag.read));
-      await store.handleEvent(MessageEvent(id: 1, message: message));
+      await store.addMessage(message);
     }
 
     await tester.pumpWidget(TestZulipApp(
@@ -196,6 +196,7 @@ void main() {
   group('InboxPage', () {
     testWidgets('page builds; empty', (tester) async {
       await setupPage(tester, unreadMessages: []);
+      check(find.textContaining('There are no unread messages in your inbox.')).findsOne();
     });
 
     // TODO more checks: ordering, etc.
@@ -205,6 +206,8 @@ void main() {
 
     // TODO test that tapping a conversation row opens the message list
     //   for the conversation
+
+    // Tests for the topic action sheet are in test/widgets/action_sheet_test.dart.
 
     group('muting', () { // aka topic visibility
       testWidgets('baseline', (tester) async {
@@ -303,6 +306,15 @@ void main() {
         check(hasAtSign(tester, findAllDmsHeaderRow(tester))).isFalse();
         check(hasAtSign(tester, findRowByLabel(tester, eg.otherUser.fullName))).isFalse();
       });
+    });
+
+    testWidgets('empty topic', (tester) async {
+      final channel = eg.stream();
+      await setupPage(tester,
+        streams: [channel],
+        subscriptions: [(eg.subscription(channel))],
+        unreadMessages: [eg.streamMessage(stream: channel, topic: '')]);
+      check(find.text(eg.defaultRealmEmptyTopicDisplayName)).findsOne();
     });
 
     group('topic visibility', () {

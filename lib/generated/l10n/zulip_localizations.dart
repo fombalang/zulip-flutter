@@ -6,11 +6,17 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'zulip_localizations_ar.dart';
+import 'zulip_localizations_de.dart';
 import 'zulip_localizations_en.dart';
-import 'zulip_localizations_fr.dart';
+import 'zulip_localizations_it.dart';
 import 'zulip_localizations_ja.dart';
+import 'zulip_localizations_nb.dart';
 import 'zulip_localizations_pl.dart';
 import 'zulip_localizations_ru.dart';
+import 'zulip_localizations_sk.dart';
+import 'zulip_localizations_sl.dart';
+import 'zulip_localizations_uk.dart';
+import 'zulip_localizations_zh.dart';
 
 // ignore_for_file: type=lint
 
@@ -66,7 +72,8 @@ import 'zulip_localizations_ru.dart';
 /// be consistent with the languages listed in the ZulipLocalizations.supportedLocales
 /// property.
 abstract class ZulipLocalizations {
-  ZulipLocalizations(String locale) : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+  ZulipLocalizations(String locale)
+    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -74,7 +81,8 @@ abstract class ZulipLocalizations {
     return Localizations.of<ZulipLocalizations>(context, ZulipLocalizations)!;
   }
 
-  static const LocalizationsDelegate<ZulipLocalizations> delegate = _ZulipLocalizationsDelegate();
+  static const LocalizationsDelegate<ZulipLocalizations> delegate =
+      _ZulipLocalizationsDelegate();
 
   /// A list of this localizations delegate along with the default localizations
   /// delegates.
@@ -86,21 +94,39 @@ abstract class ZulipLocalizations {
   /// Additional delegates can be added by appending to this list in
   /// MaterialApp. This list does not have to be used at all if a custom list
   /// of delegates is preferred or required.
-  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates = <LocalizationsDelegate<dynamic>>[
-    delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-  ];
+  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
+      <LocalizationsDelegate<dynamic>>[
+        delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('ar'),
-    Locale('fr'),
+    Locale('de'),
+    Locale('en', 'GB'),
+    Locale('it'),
     Locale('ja'),
+    Locale('nb'),
     Locale('pl'),
-    Locale('ru')
+    Locale('ru'),
+    Locale('sk'),
+    Locale('sl'),
+    Locale('uk'),
+    Locale('zh'),
+    Locale.fromSubtags(
+      languageCode: 'zh',
+      countryCode: 'CN',
+      scriptCode: 'Hans',
+    ),
+    Locale.fromSubtags(
+      languageCode: 'zh',
+      countryCode: 'TW',
+      scriptCode: 'Hant',
+    ),
   ];
 
   /// Title for About Zulip page.
@@ -127,11 +153,41 @@ abstract class ZulipLocalizations {
   /// **'Tap to view'**
   String get aboutPageTapToView;
 
+  /// Title for dialog shown on first upgrade from the legacy Zulip app.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to the new Zulip app!'**
+  String get upgradeWelcomeDialogTitle;
+
+  /// Message text for dialog shown on first upgrade from the legacy Zulip app.
+  ///
+  /// In en, this message translates to:
+  /// **'You’ll find a familiar experience in a faster, sleeker package.'**
+  String get upgradeWelcomeDialogMessage;
+
+  /// Text of link in dialog shown on first upgrade from the legacy Zulip app.
+  ///
+  /// In en, this message translates to:
+  /// **'Check out the announcement blog post!'**
+  String get upgradeWelcomeDialogLinkText;
+
+  /// Label for button dismissing dialog shown on first upgrade from the legacy Zulip app.
+  ///
+  /// In en, this message translates to:
+  /// **'Let\'s go'**
+  String get upgradeWelcomeDialogDismiss;
+
   /// Title for the page to choose between Zulip accounts.
   ///
   /// In en, this message translates to:
   /// **'Choose account'**
   String get chooseAccountPageTitle;
+
+  /// Title for the settings page.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get settingsPageTitle;
 
   /// Label for main-menu button leading to the choose-account page.
   ///
@@ -187,6 +243,12 @@ abstract class ZulipLocalizations {
   /// **'Send direct message'**
   String get profileButtonSendDirectMessage;
 
+  /// Message that appears on the user profile page when the profile cannot be shown.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not show user profile.'**
+  String get errorCouldNotShowUserProfile;
+
   /// Title for dialog asking the user to grant additional permissions.
   ///
   /// In en, this message translates to:
@@ -210,6 +272,18 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'To upload files, please grant Zulip additional permissions in Settings.'**
   String get permissionsDeniedReadExternalStorage;
+
+  /// Label for marking a channel as read.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark channel as read'**
+  String get actionSheetOptionMarkChannelAsRead;
+
+  /// Label for navigating to a channel's topic-list page.
+  ///
+  /// In en, this message translates to:
+  /// **'List of topics'**
+  String get actionSheetOptionListOfTopics;
 
   /// Label for muting a topic on action sheet.
   ///
@@ -235,6 +309,30 @@ abstract class ZulipLocalizations {
   /// **'Unfollow topic'**
   String get actionSheetOptionUnfollowTopic;
 
+  /// Label for the 'Mark as resolved' button on the topic action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as resolved'**
+  String get actionSheetOptionResolveTopic;
+
+  /// Label for the 'Mark as unresolved' button on the topic action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as unresolved'**
+  String get actionSheetOptionUnresolveTopic;
+
+  /// Error title when marking a topic as resolved failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to mark topic as resolved'**
+  String get errorResolveTopicFailedTitle;
+
+  /// Error title when marking a topic as unresolved failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to mark topic as unresolved'**
+  String get errorUnresolveTopicFailedTitle;
+
   /// Label for copy message text button on action sheet.
   ///
   /// In en, this message translates to:
@@ -253,17 +351,23 @@ abstract class ZulipLocalizations {
   /// **'Mark as unread from here'**
   String get actionSheetOptionMarkAsUnread;
 
+  /// Label for hide muted message again button on action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide muted message again'**
+  String get actionSheetOptionHideMutedMessage;
+
   /// Label for share button on action sheet.
   ///
   /// In en, this message translates to:
   /// **'Share'**
   String get actionSheetOptionShare;
 
-  /// Label for Quote and reply button on action sheet.
+  /// Label for the 'Quote message' button in the message action sheet.
   ///
   /// In en, this message translates to:
-  /// **'Quote and reply'**
-  String get actionSheetOptionQuoteAndReply;
+  /// **'Quote message'**
+  String get actionSheetOptionQuoteMessage;
 
   /// Label for star button on action sheet.
   ///
@@ -276,6 +380,18 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'Unstar message'**
   String get actionSheetOptionUnstarMessage;
+
+  /// Label for the 'Edit message' button in the message action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit message'**
+  String get actionSheetOptionEditMessage;
+
+  /// Option to mark a specific topic as read in the action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark topic as read'**
+  String get actionSheetOptionMarkTopicAsRead;
 
   /// Error title when third-party authentication has an operational error (not necessarily caused by invalid credentials).
   ///
@@ -304,7 +420,7 @@ abstract class ZulipLocalizations {
   /// Error message when the source of a message could not be fetched.
   ///
   /// In en, this message translates to:
-  /// **'Could not fetch message source'**
+  /// **'Could not fetch message source.'**
   String get errorCouldNotFetchMessageSource;
 
   /// Error message when copying the text of a message to the user's system clipboard failed.
@@ -319,11 +435,21 @@ abstract class ZulipLocalizations {
   /// **'Failed to upload file: {filename}'**
   String errorFailedToUploadFileTitle(String filename);
 
+  /// The name of a file, and its size in mebibytes.
+  ///
+  /// In en, this message translates to:
+  /// **'{filename}: {size} MiB'**
+  String filenameAndSizeInMiB(String filename, String size);
+
   /// Error message when attached files are too large in size.
   ///
   /// In en, this message translates to:
   /// **'{num, plural, =1{File is} other{{num} files are}} larger than the server\'s limit of {maxFileUploadSizeMib} MiB and will not be uploaded:\n\n{listMessage}'**
-  String errorFilesTooLarge(int num, int maxFileUploadSizeMib, String listMessage);
+  String errorFilesTooLarge(
+    int num,
+    int maxFileUploadSizeMib,
+    String listMessage,
+  );
 
   /// Error title when attached files are too large in size.
   ///
@@ -349,6 +475,12 @@ abstract class ZulipLocalizations {
   /// **'Message not sent'**
   String get errorMessageNotSent;
 
+  /// Error message for compose box when a message edit could not be saved.
+  ///
+  /// In en, this message translates to:
+  /// **'Message not saved'**
+  String get errorMessageEditNotSaved;
+
   /// Error message when the app could not connect to the server.
   ///
   /// In en, this message translates to:
@@ -359,7 +491,7 @@ abstract class ZulipLocalizations {
   ///
   /// In en, this message translates to:
   /// **'Could not connect'**
-  String get errorLoginCouldNotConnectTitle;
+  String get errorCouldNotConnectTitle;
 
   /// Error message when loading a message that does not exist.
   ///
@@ -401,7 +533,23 @@ abstract class ZulipLocalizations {
   ///
   /// In en, this message translates to:
   /// **'Error handling a Zulip event from {serverUrl}; will retry.\n\nError: {error}\n\nEvent: {event}'**
-  String errorHandlingEventDetails(String serverUrl, String error, String event);
+  String errorHandlingEventDetails(
+    String serverUrl,
+    String error,
+    String event,
+  );
+
+  /// Error title when opening a link failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to open link'**
+  String get errorCouldNotOpenLinkTitle;
+
+  /// Error message when opening a link failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Link could not be opened: {url}'**
+  String errorCouldNotOpenLink(String url);
 
   /// Error message when muting a topic failed.
   ///
@@ -445,6 +593,12 @@ abstract class ZulipLocalizations {
   /// **'Failed to unstar message'**
   String get errorUnstarMessageFailedTitle;
 
+  /// Error title when an exception prevented us from opening the compose box for editing a message.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not edit message'**
+  String get errorCouldNotEditMessageTitle;
+
   /// Success message after copy link action completed.
   ///
   /// In en, this message translates to:
@@ -475,6 +629,72 @@ abstract class ZulipLocalizations {
   /// **'You do not have permission to post in this channel.'**
   String get errorBannerCannotPostInChannelLabel;
 
+  /// Label text for the compose-box banner when you are editing a message.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit message'**
+  String get composeBoxBannerLabelEditMessage;
+
+  /// Label text for the 'Cancel' button in the compose-box banner when you are editing a message.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get composeBoxBannerButtonCancel;
+
+  /// Label text for the 'Save' button in the compose-box banner when you are editing a message.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get composeBoxBannerButtonSave;
+
+  /// Error title when a message edit cannot be saved because there is another edit already in progress.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot edit message'**
+  String get editAlreadyInProgressTitle;
+
+  /// Error message when a message edit cannot be saved because there is another edit already in progress.
+  ///
+  /// In en, this message translates to:
+  /// **'An edit is already in progress. Please wait for it to complete.'**
+  String get editAlreadyInProgressMessage;
+
+  /// Text on a message in the message list saying that a message edit request is processing. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
+  ///
+  /// In en, this message translates to:
+  /// **'SAVING EDIT…'**
+  String get savingMessageEditLabel;
+
+  /// Text on a message in the message list saying that a message edit request failed. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
+  ///
+  /// In en, this message translates to:
+  /// **'EDIT NOT SAVED'**
+  String get savingMessageEditFailedLabel;
+
+  /// Title for a confirmation dialog for discarding message text that was typed into the compose box.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard the message you’re writing?'**
+  String get discardDraftConfirmationDialogTitle;
+
+  /// Message for a confirmation dialog for discarding message text that was typed into the compose box, when editing a message.
+  ///
+  /// In en, this message translates to:
+  /// **'When you edit a message, the content that was previously in the compose box is discarded.'**
+  String get discardDraftForEditConfirmationDialogMessage;
+
+  /// Message for a confirmation dialog when restoring an outbox message, for discarding message text that was typed into the compose box.
+  ///
+  /// In en, this message translates to:
+  /// **'When you restore an unsent message, the content that was previously in the compose box is discarded.'**
+  String get discardDraftForOutboxConfirmationDialogMessage;
+
+  /// Label for the 'Discard' button on a confirmation dialog for discarding message text that was typed into the compose box.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard'**
+  String get discardDraftConfirmationDialogConfirmButton;
+
   /// Tooltip for compose box icon to attach a file to the message.
   ///
   /// In en, this message translates to:
@@ -499,6 +719,42 @@ abstract class ZulipLocalizations {
   /// **'Type a message'**
   String get composeBoxGenericContentHint;
 
+  /// Label for the compose button in the new DM sheet that starts composing a message to the selected users.
+  ///
+  /// In en, this message translates to:
+  /// **'Compose'**
+  String get newDmSheetComposeButtonLabel;
+
+  /// Title displayed at the top of the new DM screen.
+  ///
+  /// In en, this message translates to:
+  /// **'New DM'**
+  String get newDmSheetScreenTitle;
+
+  /// Label for the floating action button (FAB) that opens the new DM sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'New DM'**
+  String get newDmFabButtonLabel;
+
+  /// Hint text for the search bar when no users are selected
+  ///
+  /// In en, this message translates to:
+  /// **'Add one or more users'**
+  String get newDmSheetSearchHintEmpty;
+
+  /// Hint text for the search bar when at least one user is selected.
+  ///
+  /// In en, this message translates to:
+  /// **'Add another user…'**
+  String get newDmSheetSearchHintSomeSelected;
+
+  /// Message shown in the new DM sheet when no users match the search.
+  ///
+  /// In en, this message translates to:
+  /// **'No users found'**
+  String get newDmSheetNoUsersFound;
+
   /// Hint text for content input when sending a message to one other person.
   ///
   /// In en, this message translates to:
@@ -517,11 +773,17 @@ abstract class ZulipLocalizations {
   /// **'Jot down something'**
   String get composeBoxSelfDmContentHint;
 
-  /// Hint text for content input when sending a message to a channel
+  /// Hint text for content input when sending a message to a channel.
   ///
   /// In en, this message translates to:
-  /// **'Message #{channel} > {topic}'**
-  String composeBoxChannelContentHint(String channel, String topic);
+  /// **'Message {destination}'**
+  String composeBoxChannelContentHint(String destination);
+
+  /// Hint text for content input when the compose box is preparing to edit a message.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing…'**
+  String get preparingEditMessageContentInput;
 
   /// Tooltip for send button in compose box.
   ///
@@ -533,7 +795,7 @@ abstract class ZulipLocalizations {
   ///
   /// In en, this message translates to:
   /// **'(unknown channel)'**
-  String get composeBoxUnknownChannelName;
+  String get unknownChannelName;
 
   /// Hint text for topic input widget in compose box.
   ///
@@ -541,11 +803,23 @@ abstract class ZulipLocalizations {
   /// **'Topic'**
   String get composeBoxTopicHintText;
 
+  /// Hint text for topic input widget in compose box when topics are optional.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a topic (skip for “{defaultTopicName}”)'**
+  String composeBoxEnterTopicOrSkipHintText(String defaultTopicName);
+
   /// Placeholder in compose box showing the specified file is currently uploading.
   ///
   /// In en, this message translates to:
   /// **'Uploading {filename}…'**
   String composeBoxUploadingFilename(String filename);
+
+  /// Placeholder in compose box showing the quoted message is currently loading.
+  ///
+  /// In en, this message translates to:
+  /// **'(loading message {messageId})'**
+  String composeBoxLoadingMessage(int messageId);
 
   /// Name placeholder to use for a user when we don't know their name.
   ///
@@ -553,16 +827,40 @@ abstract class ZulipLocalizations {
   /// **'(unknown user)'**
   String get unknownUserName;
 
+  /// Message list page title for a DM group that only includes yourself.
+  ///
+  /// In en, this message translates to:
+  /// **'DMs with yourself'**
+  String get dmsWithYourselfPageTitle;
+
   /// Message list recipient header for a DM group with others.
   ///
   /// In en, this message translates to:
   /// **'You and {others}'**
   String messageListGroupYouAndOthers(String others);
 
+  /// Message list page title for a DM group with others.
+  ///
+  /// In en, this message translates to:
+  /// **'DMs with {others}'**
+  String dmsWithOthersPageTitle(String others);
+
+  /// Placeholder for some message-list pages when there are no messages.
+  ///
+  /// In en, this message translates to:
+  /// **'There are no messages here.'**
+  String get emptyMessageList;
+
+  /// Placeholder for the 'Search' page when there are no messages.
+  ///
+  /// In en, this message translates to:
+  /// **'No search results.'**
+  String get emptyMessageListSearch;
+
   /// Message list recipient header for a DM group that only includes yourself.
   ///
   /// In en, this message translates to:
-  /// **'You with yourself'**
+  /// **'Messages with yourself'**
   String get messageListGroupYouWithYourself;
 
   /// Content validation error message when the message is too long.
@@ -607,6 +905,12 @@ abstract class ZulipLocalizations {
   /// **'Close'**
   String get dialogClose;
 
+  /// Button label in error dialogs to open a web page with more information.
+  ///
+  /// In en, this message translates to:
+  /// **'Learn more'**
+  String get errorDialogLearnMore;
+
   /// Button label in error dialogs to acknowledge the error and close the dialog.
   ///
   /// In en, this message translates to:
@@ -630,6 +934,18 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'Copy link'**
   String get lightboxCopyLinkTooltip;
+
+  /// The current playback position of the video playing in the lightbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Current position'**
+  String get lightboxVideoCurrentPosition;
+
+  /// The total duration of the video playing in the lightbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Video duration'**
+  String get lightboxVideoDuration;
 
   /// Title for login page.
   ///
@@ -661,11 +977,11 @@ abstract class ZulipLocalizations {
   /// **'Add an account'**
   String get loginAddAnAccountPageTitle;
 
-  /// Input label in login page for Zulip server URL entry.
+  /// Label in login page for Zulip server URL entry.
   ///
   /// In en, this message translates to:
   /// **'Your Zulip server URL'**
-  String get loginServerUrlInputLabel;
+  String get loginServerUrlLabel;
 
   /// Icon label for button to hide password in input form.
   ///
@@ -721,10 +1037,26 @@ abstract class ZulipLocalizations {
   /// **'Topics are required in this organization.'**
   String get topicValidationErrorMandatoryButEmpty;
 
+  /// Error message in the dialog for when the Zulip Server version is unsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'{url} is running Zulip Server {zulipVersion}, which is unsupported. The minimum supported version is Zulip Server {minSupportedZulipVersion}.'**
+  String errorServerVersionUnsupportedMessage(
+    String url,
+    String zulipVersion,
+    String minSupportedZulipVersion,
+  );
+
+  /// Error message in the dialog for invalid API key.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account at {url} could not be authenticated. Please try logging in again or use another account.'**
+  String errorInvalidApiKeyMessage(String url);
+
   /// Error message when an API call returned an invalid response.
   ///
   /// In en, this message translates to:
-  /// **'The server sent an invalid response'**
+  /// **'The server sent an invalid response.'**
   String get errorInvalidResponse;
 
   /// Error message when a network request fails.
@@ -754,7 +1086,7 @@ abstract class ZulipLocalizations {
   /// Error message when a video fails to play.
   ///
   /// In en, this message translates to:
-  /// **'Unable to play the video'**
+  /// **'Unable to play the video.'**
   String get errorVideoPlayerFailed;
 
   /// Error message when URL is empty
@@ -877,17 +1209,53 @@ abstract class ZulipLocalizations {
   /// **'Unknown'**
   String get userRoleUnknown;
 
+  /// Page title for the 'Search' message view.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get searchMessagesPageTitle;
+
+  /// Hint text for the message search text field.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get searchMessagesHintText;
+
+  /// Tooltip for the 'x' button in the search text field.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get searchMessagesClearButtonTooltip;
+
   /// Title for the page with unreads.
   ///
   /// In en, this message translates to:
   /// **'Inbox'**
   String get inboxPageTitle;
 
+  /// Centered text on the 'Inbox' page saying that there is no content to show.
+  ///
+  /// In en, this message translates to:
+  /// **'There are no unread messages in your inbox. Use the buttons below to view the combined feed or list of channels.'**
+  String get inboxEmptyPlaceholder;
+
   /// Title for the page with a list of DM conversations.
   ///
   /// In en, this message translates to:
   /// **'Direct messages'**
   String get recentDmConversationsPageTitle;
+
+  /// Heading for direct messages section on the 'Inbox' message view.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct messages'**
+  String get recentDmConversationsSectionHeader;
+
+  /// Centered text on the 'Direct messages' page saying that there is no content to show.
+  ///
+  /// In en, this message translates to:
+  /// **'You have no direct messages yet! Why not start the conversation?'**
+  String get recentDmConversationsEmptyPlaceholder;
 
   /// Page title for the 'Combined feed' message view.
   ///
@@ -913,11 +1281,23 @@ abstract class ZulipLocalizations {
   /// **'Channels'**
   String get channelsPageTitle;
 
+  /// Centered text on the 'Channels' page saying that there is no content to show.
+  ///
+  /// In en, this message translates to:
+  /// **'You are not subscribed to any channels yet.'**
+  String get channelsEmptyPlaceholder;
+
   /// Label for main-menu button leading to the user's own profile.
   ///
   /// In en, this message translates to:
   /// **'My profile'**
   String get mainMenuMyProfile;
+
+  /// Label for message list button leading to topic-list page. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
+  ///
+  /// In en, this message translates to:
+  /// **'TOPICS'**
+  String get topicsButtonLabel;
 
   /// Tooltip for button to navigate to a given channel's feed
   ///
@@ -931,11 +1311,29 @@ abstract class ZulipLocalizations {
   /// **'{senderFullName} to you and {numOthers, plural, =1{1 other} other{{numOthers} others}}'**
   String notifGroupDmConversationLabel(String senderFullName, int numOthers);
 
+  /// Label for the list of pinned subscribed channels.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned'**
+  String get pinnedSubscriptionsLabel;
+
+  /// Label for the list of unpinned subscribed channels.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpinned'**
+  String get unpinnedSubscriptionsLabel;
+
   /// Display name for the user themself, to show after replying in an Android notification
   ///
   /// In en, this message translates to:
   /// **'You'**
   String get notifSelfUser;
+
+  /// Display name for the user themself, to show on an emoji reaction added by the user.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get reactedEmojiSelfUser;
 
   /// Text to display when there is one user typing.
   ///
@@ -955,6 +1353,60 @@ abstract class ZulipLocalizations {
   /// **'Several people are typing…'**
   String get manyPeopleTyping;
 
+  /// Text for "@all" wildcard-mention autocomplete option when writing a channel or DM message.
+  ///
+  /// In en, this message translates to:
+  /// **'all'**
+  String get wildcardMentionAll;
+
+  /// Text for "@everyone" wildcard-mention autocomplete option when writing a channel or DM message.
+  ///
+  /// In en, this message translates to:
+  /// **'everyone'**
+  String get wildcardMentionEveryone;
+
+  /// Text for "@channel" wildcard-mention autocomplete option when writing a channel message.
+  ///
+  /// In en, this message translates to:
+  /// **'channel'**
+  String get wildcardMentionChannel;
+
+  /// Text for "@stream" wildcard-mention autocomplete option when writing a channel message in older servers.
+  ///
+  /// In en, this message translates to:
+  /// **'stream'**
+  String get wildcardMentionStream;
+
+  /// Text for "@topic" wildcard-mention autocomplete option when writing a channel message.
+  ///
+  /// In en, this message translates to:
+  /// **'topic'**
+  String get wildcardMentionTopic;
+
+  /// Description for "@all", "@everyone", "@channel", and "@stream" wildcard-mention autocomplete options when writing a channel message.
+  ///
+  /// In en, this message translates to:
+  /// **'Notify channel'**
+  String get wildcardMentionChannelDescription;
+
+  /// Description for "@all", "@everyone", and "@stream" wildcard-mention autocomplete options when writing a channel message in older servers.
+  ///
+  /// In en, this message translates to:
+  /// **'Notify stream'**
+  String get wildcardMentionStreamDescription;
+
+  /// Description for "@all" and "@everyone" wildcard-mention autocomplete options when writing a DM message.
+  ///
+  /// In en, this message translates to:
+  /// **'Notify recipients'**
+  String get wildcardMentionAllDmDescription;
+
+  /// Description for "@topic" wildcard-mention autocomplete options when writing a channel message.
+  ///
+  /// In en, this message translates to:
+  /// **'Notify topic'**
+  String get wildcardMentionTopicDescription;
+
   /// Label for an edited message. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
   ///
   /// In en, this message translates to:
@@ -966,6 +1418,48 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'MOVED'**
   String get messageIsMovedLabel;
+
+  /// Text on a message in the message list saying that a send message request failed. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
+  ///
+  /// In en, this message translates to:
+  /// **'MESSAGE NOT SENT'**
+  String get messageNotSentLabel;
+
+  /// The list of people who voted for a poll option, wrapped in parentheses.
+  ///
+  /// In en, this message translates to:
+  /// **'({voterNames})'**
+  String pollVoterNames(String voterNames);
+
+  /// Title for theme setting. (Use ALL CAPS for cased alphabets: Latin, Greek, Cyrillic, etc.)
+  ///
+  /// In en, this message translates to:
+  /// **'THEME'**
+  String get themeSettingTitle;
+
+  /// Label for dark theme setting.
+  ///
+  /// In en, this message translates to:
+  /// **'Dark'**
+  String get themeSettingDark;
+
+  /// Label for light theme setting.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get themeSettingLight;
+
+  /// Label for system theme setting.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get themeSettingSystem;
+
+  /// Label for toggling setting to open links with in-app browser
+  ///
+  /// In en, this message translates to:
+  /// **'Open links with in-app browser'**
+  String get openLinksWithInAppBrowser;
 
   /// Text to display for a poll when the question is missing
   ///
@@ -979,17 +1473,95 @@ abstract class ZulipLocalizations {
   /// **'This poll has no options yet.'**
   String get pollWidgetOptionsMissing;
 
+  /// Title of setting controlling initial anchor of message list.
+  ///
+  /// In en, this message translates to:
+  /// **'Open message feeds at'**
+  String get initialAnchorSettingTitle;
+
+  /// Description of setting controlling initial anchor of message list.
+  ///
+  /// In en, this message translates to:
+  /// **'You can choose whether message feeds open at your first unread message or at the newest messages.'**
+  String get initialAnchorSettingDescription;
+
+  /// Label for a value of setting controlling initial anchor of message list.
+  ///
+  /// In en, this message translates to:
+  /// **'First unread message'**
+  String get initialAnchorSettingFirstUnreadAlways;
+
+  /// Label for a value of setting controlling initial anchor of message list.
+  ///
+  /// In en, this message translates to:
+  /// **'First unread message in conversation views, newest message elsewhere'**
+  String get initialAnchorSettingFirstUnreadConversations;
+
+  /// Label for a value of setting controlling initial anchor of message list.
+  ///
+  /// In en, this message translates to:
+  /// **'Newest message'**
+  String get initialAnchorSettingNewestAlways;
+
+  /// Title of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark messages as read on scroll'**
+  String get markReadOnScrollSettingTitle;
+
+  /// Description of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'When scrolling through messages, should they automatically be marked as read?'**
+  String get markReadOnScrollSettingDescription;
+
+  /// Label for a value of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Always'**
+  String get markReadOnScrollSettingAlways;
+
+  /// Label for a value of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Never'**
+  String get markReadOnScrollSettingNever;
+
+  /// Label for a value of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Only in conversation views'**
+  String get markReadOnScrollSettingConversations;
+
+  /// Description for a value of setting controlling which message-list views should mark read on scroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages will be automatically marked as read only when viewing a single topic or direct message conversation.'**
+  String get markReadOnScrollSettingConversationsDescription;
+
+  /// Title of settings page for experimental, in-development features
+  ///
+  /// In en, this message translates to:
+  /// **'Experimental features'**
+  String get experimentalFeatureSettingsPageTitle;
+
+  /// Warning text on settings page for experimental, in-development features
+  ///
+  /// In en, this message translates to:
+  /// **'These options enable features which are still under development and not ready. They may not work, and may cause issues in other areas of the app.\n\nThe purpose of these settings is for experimentation by people working on developing Zulip.'**
+  String get experimentalFeatureSettingsWarning;
+
   /// Error title when notification opening fails
   ///
   /// In en, this message translates to:
   /// **'Failed to open notification'**
   String get errorNotificationOpenTitle;
 
-  /// Error message when the account associated with the notification is not found
+  /// Error message when the account associated with the notification could not be found
   ///
   /// In en, this message translates to:
-  /// **'The account associated with this notification no longer exists.'**
-  String get errorNotificationOpenAccountMissing;
+  /// **'The account associated with this notification could not be found.'**
+  String get errorNotificationOpenAccountNotFound;
 
   /// Error title when adding a message reaction fails
   ///
@@ -1014,40 +1586,128 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'Search emoji'**
   String get emojiPickerSearchEmoji;
+
+  /// Text to show at the start of a message list if there are no earlier messages.
+  ///
+  /// In en, this message translates to:
+  /// **'No earlier messages'**
+  String get noEarlierMessages;
+
+  /// Label for the button revealing hidden message from a muted sender in message list.
+  ///
+  /// In en, this message translates to:
+  /// **'Reveal message'**
+  String get revealButtonLabel;
+
+  /// Text to display in place of a muted user's name.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted user'**
+  String get mutedUser;
+
+  /// Tooltip for button to scroll to bottom.
+  ///
+  /// In en, this message translates to:
+  /// **'Scroll to bottom'**
+  String get scrollToBottomTooltip;
+
+  /// Placeholder to show in place of the app version when it is unknown.
+  ///
+  /// In en, this message translates to:
+  /// **'(…)'**
+  String get appVersionUnknownPlaceholder;
+
+  /// The name of Zulip. This should be either 'Zulip' or a transliteration.
+  ///
+  /// In en, this message translates to:
+  /// **'Zulip'**
+  String get zulipAppTitle;
 }
 
-class _ZulipLocalizationsDelegate extends LocalizationsDelegate<ZulipLocalizations> {
+class _ZulipLocalizationsDelegate
+    extends LocalizationsDelegate<ZulipLocalizations> {
   const _ZulipLocalizationsDelegate();
 
   @override
   Future<ZulipLocalizations> load(Locale locale) {
-    return SynchronousFuture<ZulipLocalizations>(lookupZulipLocalizations(locale));
+    return SynchronousFuture<ZulipLocalizations>(
+      lookupZulipLocalizations(locale),
+    );
   }
 
   @override
-  bool isSupported(Locale locale) => <String>['ar', 'en', 'fr', 'ja', 'pl', 'ru'].contains(locale.languageCode);
+  bool isSupported(Locale locale) => <String>[
+    'ar',
+    'de',
+    'en',
+    'it',
+    'ja',
+    'nb',
+    'pl',
+    'ru',
+    'sk',
+    'sl',
+    'uk',
+    'zh',
+  ].contains(locale.languageCode);
 
   @override
   bool shouldReload(_ZulipLocalizationsDelegate old) => false;
 }
 
 ZulipLocalizations lookupZulipLocalizations(Locale locale) {
+  // Lookup logic when language+script+country codes are specified.
+  switch (locale.toString()) {
+    case 'zh_Hans_CN':
+      return ZulipLocalizationsZhHansCn();
+    case 'zh_Hant_TW':
+      return ZulipLocalizationsZhHantTw();
+  }
 
+  // Lookup logic when language+country codes are specified.
+  switch (locale.languageCode) {
+    case 'en':
+      {
+        switch (locale.countryCode) {
+          case 'GB':
+            return ZulipLocalizationsEnGb();
+        }
+        break;
+      }
+  }
 
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
-    case 'ar': return ZulipLocalizationsAr();
-    case 'en': return ZulipLocalizationsEn();
-    case 'fr': return ZulipLocalizationsFr();
-    case 'ja': return ZulipLocalizationsJa();
-    case 'pl': return ZulipLocalizationsPl();
-    case 'ru': return ZulipLocalizationsRu();
+    case 'ar':
+      return ZulipLocalizationsAr();
+    case 'de':
+      return ZulipLocalizationsDe();
+    case 'en':
+      return ZulipLocalizationsEn();
+    case 'it':
+      return ZulipLocalizationsIt();
+    case 'ja':
+      return ZulipLocalizationsJa();
+    case 'nb':
+      return ZulipLocalizationsNb();
+    case 'pl':
+      return ZulipLocalizationsPl();
+    case 'ru':
+      return ZulipLocalizationsRu();
+    case 'sk':
+      return ZulipLocalizationsSk();
+    case 'sl':
+      return ZulipLocalizationsSl();
+    case 'uk':
+      return ZulipLocalizationsUk();
+    case 'zh':
+      return ZulipLocalizationsZh();
   }
 
   throw FlutterError(
     'ZulipLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
     'an issue with the localizations generation tool. Please file an issue '
     'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.'
+    'that was used.',
   );
 }

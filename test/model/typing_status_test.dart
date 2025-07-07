@@ -35,7 +35,7 @@ void checkSetTypingStatusRequests(
           'type': 'channel',
           'op': op.toJson(),
           'stream_id': narrow.streamId.toString(),
-          'topic': narrow.topic}),
+          'topic': narrow.topic.apiName}),
         DmNarrow() => conditionTypingRequest({
           'type': 'direct',
           'op': op.toJson(),
@@ -77,9 +77,11 @@ void main() {
     int? selfUserId,
     Map<SendableNarrow, List<User>> typistsByNarrow = const {},
   }) {
-    model = TypingStatus(
-      selfUserId: selfUserId ?? eg.selfUser.userId,
-      typingStartedExpiryPeriod: const Duration(milliseconds: 15000));
+    final store = eg.store(
+      account: eg.selfAccount.copyWith(id: selfUserId),
+      initialSnapshot: eg.initialSnapshot(
+        serverTypingStartedExpiryPeriodMilliseconds: 15000));
+    model = store.typingStatus;
     check(model.debugActiveNarrows).isEmpty();
     notifiedCount = 0;
     model.addListener(() => notifiedCount += 1);
@@ -94,7 +96,7 @@ void main() {
   }
 
   final stream = eg.stream();
-  final topicNarrow = TopicNarrow(stream.streamId, 'foo');
+  final topicNarrow = eg.topicNarrow(stream.streamId, 'foo');
 
   final dmNarrow = DmNarrow.withUser(eg.otherUser.userId, selfUserId: eg.selfUser.userId);
   final groupNarrow = DmNarrow.withOtherUsers(
@@ -272,7 +274,7 @@ void main() {
       final channel = eg.stream();
       await store.addStream(channel);
       await store.addSubscription(eg.subscription(channel));
-      narrow = TopicNarrow(channel.streamId, 'topic');
+      narrow = eg.topicNarrow(channel.streamId, 'topic');
     }
 
     /// Prepares store and triggers a "typing started" notice.

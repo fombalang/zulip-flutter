@@ -9,6 +9,7 @@ import 'package:flutter_checks/flutter_checks.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:legacy_checks/legacy_checks.dart';
 import 'package:zulip/api/model/events.dart';
 import 'package:zulip/api/model/model.dart';
 import 'package:zulip/api/route/realm.dart';
@@ -35,6 +36,7 @@ import 'text_test.dart';
 
 void main() {
   TestZulipBinding.ensureInitialized();
+  MessageListPage.debugEnableMarkReadOnScroll = false;
 
   late PerAccountStore store;
   late FakeApiConnection connection;
@@ -141,8 +143,8 @@ void main() {
                 await setupChipsInBox(tester, reactions: reactions);
 
                 final reactionChipsList = tester.element(find.byType(ReactionChipsList));
-                check(MediaQuery.of(reactionChipsList))
-                  .textScaler.equals(TextScaler.linear(textScaleFactor));
+                check(MediaQuery.of(reactionChipsList).textScaler).legacyMatcher(
+                  isSystemTextScaler(withScaleFactor: textScaleFactor));
                 check(Directionality.of(reactionChipsList)).equals(textDirection);
 
                 // TODO(upstream) Do these in an addTearDown, once we can:
@@ -160,7 +162,7 @@ void main() {
             // Base JSON for various unicode emoji reactions. Just missing user_id.
             final u1 = {'emoji_name': '+1', 'emoji_code': '1f44d', 'reaction_type': 'unicode_emoji'};
             final u2 = {'emoji_name': 'family_man_man_girl_boy', 'emoji_code': '1f468-200d-1f468-200d-1f467-200d-1f466', 'reaction_type': 'unicode_emoji'};
-            final u3 = {'emoji_name': 'smile', 'emoji_code': '1f642', 'reaction_type': 'unicode_emoji'};
+            final u3 = {'emoji_name': 'slight_smile', 'emoji_code': '1f642', 'reaction_type': 'unicode_emoji'};
             final u4 = {'emoji_name': 'tada', 'emoji_code': '1f389', 'reaction_type': 'unicode_emoji'};
             final u5 = {'emoji_name': 'exploding_head', 'emoji_code': '1f92f', 'reaction_type': 'unicode_emoji'};
 
@@ -226,6 +228,27 @@ void main() {
         }
       }
     }
+
+    testWidgets('show "Muted user" label for muted reactors', (tester) async {
+      final user1 = eg.user(userId: 1, fullName: 'User 1');
+      final user2 = eg.user(userId: 2, fullName: 'User 2');
+
+      await prepare();
+      await store.addUsers([user1, user2]);
+      await store.setMutedUsers([user1.userId]);
+      await setupChipsInBox(tester,
+        reactions: [
+          Reaction.fromJson({'emoji_name': '+1', 'emoji_code': '1f44d', 'reaction_type': 'unicode_emoji', 'user_id': user1.userId}),
+          Reaction.fromJson({'emoji_name': '+1', 'emoji_code': '1f44d', 'reaction_type': 'unicode_emoji', 'user_id': user2.userId}),
+        ]);
+
+      final reactionChipFinder = find.byType(ReactionChip);
+      check(reactionChipFinder).findsOne();
+      check(find.descendant(
+        of: reactionChipFinder,
+        matching: find.text('Muted user, User 2')
+      )).findsOne();
+    });
   });
 
   testWidgets('Smoke test for light/dark/lerped', (tester) async {
@@ -238,7 +261,7 @@ void main() {
     await setupChipsInBox(tester, reactions: [
       Reaction.fromJson({
         'user_id': eg.selfUser.userId,
-        'emoji_name': 'smile', 'emoji_code': '1f642', 'reaction_type': 'unicode_emoji'}),
+        'emoji_name': 'slight_smile', 'emoji_code': '1f642', 'reaction_type': 'unicode_emoji'}),
       Reaction.fromJson({
         'user_id': eg.otherUser.userId,
         'emoji_name': 'tada', 'emoji_code': '1f389', 'reaction_type': 'unicode_emoji'}),
@@ -250,26 +273,26 @@ void main() {
       return material.color;
     }
 
-    check(backgroundColor('smile')).isNotNull()
-      .isSameColorAs(EmojiReactionTheme.light().bgSelected);
+    check(backgroundColor('slight_smile')).isNotNull()
+      .isSameColorAs(EmojiReactionTheme.light.bgSelected);
     check(backgroundColor('tada')).isNotNull()
-      .isSameColorAs(EmojiReactionTheme.light().bgUnselected);
+      .isSameColorAs(EmojiReactionTheme.light.bgUnselected);
 
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
     await tester.pump();
 
     await tester.pump(kThemeAnimationDuration * 0.4);
-    final expectedLerped = EmojiReactionTheme.light().lerp(EmojiReactionTheme.dark(), 0.4);
-    check(backgroundColor('smile')).isNotNull()
+    final expectedLerped = EmojiReactionTheme.light.lerp(EmojiReactionTheme.dark, 0.4);
+    check(backgroundColor('slight_smile')).isNotNull()
       .isSameColorAs(expectedLerped.bgSelected);
     check(backgroundColor('tada')).isNotNull()
       .isSameColorAs(expectedLerped.bgUnselected);
 
     await tester.pump(kThemeAnimationDuration * 0.6);
-    check(backgroundColor('smile')).isNotNull()
-      .isSameColorAs(EmojiReactionTheme.dark().bgSelected);
+    check(backgroundColor('slight_smile')).isNotNull()
+      .isSameColorAs(EmojiReactionTheme.dark.bgSelected);
     check(backgroundColor('tada')).isNotNull()
-      .isSameColorAs(EmojiReactionTheme.dark().bgUnselected);
+      .isSameColorAs(EmojiReactionTheme.dark.bgUnselected);
   });
 
   testWidgets('use emoji font', (tester) async {
@@ -298,14 +321,17 @@ void main() {
   // - Non-animated image emoji is selected when intended
 
   group('EmojiPicker', () {
-    final popularCandidates = EmojiStore.popularEmojiCandidates;
+    final popularCandidates =
+      (eg.store()..setServerEmojiData(eg.serverEmojiDataPopular))
+        .popularEmojiCandidates();
 
     Future<void> setupEmojiPicker(WidgetTester tester, {
       required StreamMessage message,
       required Narrow narrow,
     }) async {
       addTearDown(testBinding.reset);
-      assert(narrow.containsMessage(message));
+      // TODO(#1667) will be null in a search narrow; remove `!`.
+      assert(narrow.containsMessage(message)!);
 
       final httpClient = FakeImageHttpClient();
       debugNetworkImageHttpClientProvider = () => httpClient;
@@ -329,6 +355,11 @@ void main() {
       await tester.pumpWidget(TestZulipApp(accountId: eg.selfAccount.id,
         child: MessageListPage(initNarrow: narrow)));
 
+      store.setServerEmojiData(eg.serverEmojiDataPopularPlus(
+        ServerEmojiData(codeToNames: {
+          '1f4a4': ['zzz', 'sleepy'], // (just 'zzz' in real data)
+        })));
+
       // global store, per-account store, and message list get loaded
       await tester.pumpAndSettle();
       // request the message action sheet
@@ -336,9 +367,6 @@ void main() {
       // sheet appears onscreen; default duration of bottom-sheet enter animation
       await tester.pump(const Duration(milliseconds: 250));
 
-      store.setServerEmojiData(ServerEmojiData(codeToNames: {
-        '1f4a4': ['zzz', 'sleepy'], // (just 'zzz' in real data)
-      }));
       await store.handleEvent(RealmEmojiUpdateEvent(id: 1, realmEmoji: {
         '1': eg.realmEmojiItem(emojiCode: '1', emojiName: 'buzzing'),
       }));
@@ -350,6 +378,9 @@ void main() {
     }
 
     final searchFieldFinder = find.widgetWithText(TextField, 'Search emoji');
+
+    Finder findInPicker(Finder finder) =>
+      find.descendant(of: find.byType(EmojiPicker), matching: finder);
 
     Condition<Object?> conditionEmojiListEntry({
       required ReactionType emojiType,
@@ -429,9 +460,7 @@ void main() {
       await setupEmojiPicker(tester, message: message, narrow: TopicNarrow.ofMessage(message));
 
       connection.prepare(json: {});
-      await tester.tap(find.descendant(
-        of: find.byType(BottomSheet),
-        matching: find.text('\u{1f4a4}'))); // 'zzz' emoji
+      await tester.tap(findInPicker(find.text('\u{1f4a4}'))); // 'zzz' emoji
       await tester.pump(Duration.zero);
 
       check(connection.lastRequest).isA<http.Request>()
@@ -452,15 +481,9 @@ void main() {
 
       connection.prepare(
         delay: const Duration(seconds: 2),
-        httpStatus: 400, json: {
-          'code': 'BAD_REQUEST',
-          'msg': 'Invalid message(s)',
-          'result': 'error',
-        });
+        apiException: eg.apiBadRequest(message: 'Invalid message(s)'));
 
-      await tester.tap(find.descendant(
-        of: find.byType(BottomSheet),
-        matching: find.text('\u{1f4a4}'))); // 'zzz' emoji
+      await tester.tap(findInPicker(find.text('\u{1f4a4}'))); // 'zzz' emoji
       await tester.pump(); // register tap
       await tester.pump(const Duration(seconds: 1)); // emoji picker animates away
       await tester.pump(const Duration(seconds: 1)); // error arrives; error dialog shows
@@ -470,6 +493,92 @@ void main() {
         expectedMessage: 'Invalid message(s)')));
 
       debugNetworkImageHttpClientProvider = null;
+    });
+
+    group('handle view paddings', () {
+      const screenHeight = 400.0;
+
+      late Rect scrollViewRect;
+      final scrollViewFinder = findInPicker(find.bySubtype<ScrollView>());
+
+      Rect getListEntriesRect(WidgetTester tester) =>
+        tester.getRect(find.byType(EmojiPickerListEntry).first)
+          .expandToInclude(tester.getRect(find.byType(EmojiPickerListEntry).last));
+
+      Future<void> prepare(WidgetTester tester, {
+        required FakeViewPadding viewPadding,
+      }) async {
+        addTearDown(tester.view.reset);
+        tester.view.physicalSize = Size(640, screenHeight);
+        // This makes it easier to convert between device pixels used for
+        // [FakeViewPadding] and logical pixels used in tests.
+        // If needed, there is a clearer way to implement this generally.
+        // See comment: https://github.com/zulip/zulip-flutter/pull/1315/files#r1962703436
+        tester.view.devicePixelRatio = 1.0;
+
+        tester.view.viewPadding = viewPadding;
+        tester.view.padding = viewPadding;
+
+        final message = eg.streamMessage();
+        await setupEmojiPicker(tester,
+          message: message, narrow: TopicNarrow.ofMessage(message));
+
+        scrollViewRect = tester.getRect(scrollViewFinder);
+        // The scroll view should expand all the way to the bottom of the
+        // screen, even if there is device bottom padding.
+        check(scrollViewRect)
+          ..bottom.equals(screenHeight)
+          // There should always be enough entries to overflow the scroll view.
+          ..height.isLessThan(getListEntriesRect(tester).height);
+      }
+
+      testWidgets('no view padding', (tester) async {
+        await prepare(tester, viewPadding: FakeViewPadding.zero);
+
+        // The top edge of the list entries is padded by 8px from the top edge
+        // of the scroll view; the bottom edge is out of view.
+        Rect listEntriesRect = getListEntriesRect(tester);
+        check(scrollViewRect)
+          ..top.equals(listEntriesRect.top - 8)
+          ..bottom.isLessThan(listEntriesRect.bottom);
+
+        // Scroll to the very bottom of the list with a large offset.
+        await tester.drag(scrollViewFinder, Offset(0, -500));
+        await tester.pump();
+        // The top edge of the list entries is out of view;
+        // the bottom is padded by 8px, the minimum padding, from the bottom
+        // edge of the scroll view.
+        listEntriesRect = getListEntriesRect(tester);
+        check(scrollViewRect)
+          ..top.isGreaterThan(listEntriesRect.top)
+          ..bottom.equals(listEntriesRect.bottom + 8);
+
+        debugNetworkImageHttpClientProvider = null;
+      });
+
+      testWidgets('with bottom view padding', (tester) async {
+        await prepare(tester, viewPadding: FakeViewPadding(bottom: 10));
+
+        // The top edge of the list entries is padded by 8px from the top edge
+        // of the scroll view; the bottom edge is out of view.
+        Rect listEntriesRect = getListEntriesRect(tester);
+        check(scrollViewRect)
+          ..top.equals(listEntriesRect.top - 8)
+          ..bottom.isLessThan(listEntriesRect.bottom);
+
+        // Scroll to the very bottom of the list with a large offset.
+        await tester.drag(scrollViewFinder, Offset(0, -500));
+        await tester.pump();
+        // The top edge of the list entries is out of view;
+        // the bottom edge is padded by 10px from the bottom edge of the scroll
+        // view, because the view bottom padding is larger than the minimum 8px.
+        listEntriesRect = getListEntriesRect(tester);
+        check(scrollViewRect)
+          ..top.isGreaterThan(listEntriesRect.top)
+          ..bottom.equals(listEntriesRect.bottom + 10);
+
+        debugNetworkImageHttpClientProvider = null;
+      });
     });
   });
 }

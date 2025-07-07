@@ -7,8 +7,12 @@ part 'channels.g.dart';
 /// https://zulip.com/api/get-stream-topics
 Future<GetStreamTopicsResult> getStreamTopics(ApiConnection connection, {
   required int streamId,
+  required bool allowEmptyTopicName,
 }) {
-  return connection.get('getStreamTopics', GetStreamTopicsResult.fromJson, 'users/me/$streamId/topics', {});
+  assert(allowEmptyTopicName, '`allowEmptyTopicName` should only be true');
+  return connection.get('getStreamTopics', GetStreamTopicsResult.fromJson, 'users/me/$streamId/topics', {
+    'allow_empty_topic_name': allowEmptyTopicName,
+  });
 }
 
 @JsonSerializable(fieldRename: FieldRename.snake)
@@ -28,7 +32,7 @@ class GetStreamTopicsResult {
 @JsonSerializable(fieldRename: FieldRename.snake)
 class GetStreamTopicsEntry {
   final int maxId;
-  final String name;
+  final TopicName name;
 
   GetStreamTopicsEntry({
     required this.maxId,
@@ -46,7 +50,7 @@ class GetStreamTopicsEntry {
 // TODO(server-7): remove this and just use updateUserTopic
 Future<void> updateUserTopicCompat(ApiConnection connection, {
   required int streamId,
-  required String topic,
+  required TopicName topic,
   required UserTopicVisibilityPolicy visibilityPolicy,
 }) {
   final useLegacyApi = connection.zulipFeatureLevel! < 170;
@@ -59,7 +63,7 @@ Future<void> updateUserTopicCompat(ApiConnection connection, {
     // https://zulip.com/api/mute-topic
     return connection.patch('muteTopic', (_) {}, 'users/me/subscriptions/muted_topics', {
       'stream_id': streamId,
-      'topic': RawParameter(topic),
+      'topic': RawParameter(topic.apiName),
       'op': RawParameter(op),
     });
   } else {
@@ -76,14 +80,14 @@ Future<void> updateUserTopicCompat(ApiConnection connection, {
 // TODO(server-7) remove FL 170+ mention in doc, and the related `assert`
 Future<void> updateUserTopic(ApiConnection connection, {
   required int streamId,
-  required String topic,
+  required TopicName topic,
   required UserTopicVisibilityPolicy visibilityPolicy,
 }) {
   assert(visibilityPolicy != UserTopicVisibilityPolicy.unknown);
   assert(connection.zulipFeatureLevel! >= 170);
   return connection.post('updateUserTopic', (_) {}, 'user_topics', {
     'stream_id': streamId,
-    'topic': RawParameter(topic),
+    'topic': RawParameter(topic.apiName),
     'visibility_policy': visibilityPolicy,
   });
 }

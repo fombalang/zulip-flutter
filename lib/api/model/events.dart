@@ -37,6 +37,13 @@ sealed class Event {
           case 'update': return RealmUserUpdateEvent.fromJson(json);
           default: return UnexpectedEvent.fromJson(json);
         }
+      case 'saved_snippets':
+        switch (json['op'] as String) {
+          case 'add': return SavedSnippetsAddEvent.fromJson(json);
+          case 'update': return SavedSnippetsUpdateEvent.fromJson(json);
+          case 'remove': return SavedSnippetsRemoveEvent.fromJson(json);
+          default: return UnexpectedEvent.fromJson(json);
+        }
       case 'stream':
         switch (json['op'] as String) {
           case 'create': return ChannelCreateEvent.fromJson(json);
@@ -55,6 +62,7 @@ sealed class Event {
         }
       // case 'muted_topics': … // TODO(#422) we ignore this feature on older servers
       case 'user_topic': return UserTopicEvent.fromJson(json);
+      case 'muted_users': return MutedUsersEvent.fromJson(json);
       case 'message': return MessageEvent.fromJson(json);
       case 'update_message': return UpdateMessageEvent.fromJson(json);
       case 'delete_message': return DeleteMessageEvent.fromJson(json);
@@ -66,6 +74,7 @@ sealed class Event {
         }
       case 'submessage': return SubmessageEvent.fromJson(json);
       case 'typing': return TypingEvent.fromJson(json);
+      case 'presence': return PresenceEvent.fromJson(json);
       case 'reaction': return ReactionEvent.fromJson(json);
       case 'heartbeat': return HeartbeatEvent.fromJson(json);
       // TODO add many more event types
@@ -334,6 +343,68 @@ class RealmUserUpdateEvent extends RealmUserEvent {
   // TODO make round-trip (see _readFromPerson)
   @override
   Map<String, dynamic> toJson() => _$RealmUserUpdateEventToJson(this);
+}
+
+/// A Zulip event of type `saved_snippets`: https://zulip.com/api/get-events#saved_snippets-add
+sealed class SavedSnippetsEvent extends Event {
+  @override
+  @JsonKey(includeToJson: true)
+  String get type => 'saved_snippets';
+
+  String get op;
+
+  SavedSnippetsEvent({required super.id});
+}
+
+/// A [SavedSnippetsEvent] with op `add`: https://zulip.com/api/get-events#saved_snippets-add
+@JsonSerializable(fieldRename: FieldRename.snake)
+class SavedSnippetsAddEvent extends SavedSnippetsEvent {
+  @override
+  String get op => 'add';
+
+  final SavedSnippet savedSnippet;
+
+  SavedSnippetsAddEvent({required super.id, required this.savedSnippet});
+
+  factory SavedSnippetsAddEvent.fromJson(Map<String, dynamic> json) =>
+    _$SavedSnippetsAddEventFromJson(json);
+
+  @override
+  Map<String, dynamic> toJson() => _$SavedSnippetsAddEventToJson(this);
+}
+
+/// A [SavedSnippetsEvent] with op `update`: https://zulip.com/api/get-events#saved_snippets-update
+@JsonSerializable(fieldRename: FieldRename.snake)
+class SavedSnippetsUpdateEvent extends SavedSnippetsEvent {
+  @override
+  String get op => 'update';
+
+  final SavedSnippet savedSnippet;
+
+  SavedSnippetsUpdateEvent({required super.id, required this.savedSnippet});
+
+  factory SavedSnippetsUpdateEvent.fromJson(Map<String, dynamic> json) =>
+    _$SavedSnippetsUpdateEventFromJson(json);
+
+  @override
+  Map<String, dynamic> toJson() => _$SavedSnippetsUpdateEventToJson(this);
+}
+
+/// A [SavedSnippetsEvent] with op `remove`: https://zulip.com/api/get-events#saved_snippets-remove
+@JsonSerializable(fieldRename: FieldRename.snake)
+class SavedSnippetsRemoveEvent extends SavedSnippetsEvent {
+  @override
+  String get op => 'remove';
+
+  final int savedSnippetId;
+
+  SavedSnippetsRemoveEvent({required super.id, required this.savedSnippetId});
+
+  factory SavedSnippetsRemoveEvent.fromJson(Map<String, dynamic> json) =>
+    _$SavedSnippetsRemoveEventFromJson(json);
+
+  @override
+  Map<String, dynamic> toJson() => _$SavedSnippetsRemoveEventToJson(this);
 }
 
 /// A Zulip event of type `stream`.
@@ -645,7 +716,7 @@ class UserTopicEvent extends Event {
   String get type => 'user_topic';
 
   final int streamId;
-  final String topicName;
+  final TopicName topicName;
   final int lastUpdated;
   final UserTopicVisibilityPolicy visibilityPolicy;
 
@@ -664,9 +735,26 @@ class UserTopicEvent extends Event {
   Map<String, dynamic> toJson() => _$UserTopicEventToJson(this);
 }
 
+/// A Zulip event of type `muted_users`: https://zulip.com/api/get-events#muted_users
+@JsonSerializable(fieldRename: FieldRename.snake)
+class MutedUsersEvent extends Event {
+  @override
+  @JsonKey(includeToJson: true)
+  String get type => 'muted_users';
+
+  final List<MutedUserItem> mutedUsers;
+
+  MutedUsersEvent({required super.id, required this.mutedUsers});
+
+  factory MutedUsersEvent.fromJson(Map<String, dynamic> json) =>
+    _$MutedUsersEventFromJson(json);
+
+  @override
+  Map<String, dynamic> toJson() => _$MutedUsersEventToJson(this);
+}
+
 /// A Zulip event of type `message`: https://zulip.com/api/get-events#message
-// TODO use [JsonSerializable] here too, using its customization features,
-//   in order to skip the boilerplate in [fromJson] and [toJson].
+@JsonSerializable(fieldRename: FieldRename.snake)
 class MessageEvent extends Event {
   @override
   @JsonKey(includeToJson: true)
@@ -675,29 +763,30 @@ class MessageEvent extends Event {
   // In the server API, the `flags` field appears directly on the event rather
   // than on the message object.  To avoid proliferating message types, we
   // normalize that away in deserialization.
-  //
-  // The other difference in the server API between message objects in these
-  // events and in the get-messages results is that `matchContent` and
-  // `matchTopic` are absent here.  Already [Message.matchContent] and
-  // [Message.matchTopic] are optional, so no action is needed on that.
+  @JsonKey(readValue: _readMessageValue, fromJson: Message.fromJson, includeToJson: false)
   final Message message;
 
-  MessageEvent({required super.id, required this.message});
+  // When present, this equals the "local_id" parameter
+  // from a previous [sendMessage] call by us.
+  //
+  // This is not yet fully documented.  See CZO discussion for reference:
+  //   https://chat.zulip.org/#narrow/channel/412-api-documentation/topic/local_id.2C.20queue_id.2Fsender_queue_id/near/2135340
+  final String? localMessageId;
 
-  factory MessageEvent.fromJson(Map<String, dynamic> json) => MessageEvent(
-    id: json['id'] as int,
-    message: Message.fromJson({
-      ...json['message'] as Map<String, dynamic>,
-      'flags': (json['flags'] as List<dynamic>).map((e) => e as String).toList(),
-    }),
-  );
+  MessageEvent({required super.id, required this.message, required this.localMessageId});
+
+  static Map<String, dynamic> _readMessageValue(Map<dynamic, dynamic> json, String key) =>
+    {...json['message'] as Map<String, dynamic>, 'flags': json['flags']};
+
+  factory MessageEvent.fromJson(Map<String, dynamic> json) =>
+    _$MessageEventFromJson(json);
 
   @override
   Map<String, dynamic> toJson() {
     final messageJson = message.toJson();
     final flags = messageJson['flags'];
     messageJson.remove('flags');
-    return {'id': id, 'type': type, 'message': messageJson, 'flags': flags};
+    return {..._$MessageEventToJson(this), 'message': messageJson, 'flags': flags};
   }
 }
 
@@ -718,16 +807,8 @@ class UpdateMessageEvent extends Event {
 
   // final String? streamName; // ignore
 
-  @JsonKey(name: 'stream_id')
-  final int? origStreamId;
-  final int? newStreamId;
-
-  final PropagateMode? propagateMode;
-
-  @JsonKey(name: 'orig_subject')
-  final String? origTopic;
-  @JsonKey(name: 'subject')
-  final String? newTopic;
+  @JsonKey(readValue: _readMoveData, fromJson: UpdateMessageMoveData.tryParseFromJson, includeToJson: false)
+  final UpdateMessageMoveData? moveData;
 
   // final List<TopicLink> topicLinks; // TODO handle
 
@@ -747,17 +828,19 @@ class UpdateMessageEvent extends Event {
     required this.messageIds,
     required this.flags,
     required this.editTimestamp,
-    required this.origStreamId,
-    required this.newStreamId,
-    required this.propagateMode,
-    required this.origTopic,
-    required this.newTopic,
+    required this.moveData,
     required this.origContent,
     required this.origRenderedContent,
     required this.content,
     required this.renderedContent,
     required this.isMeMessage,
   });
+
+  static Map<String, dynamic> _readMoveData(Map<dynamic, dynamic> json, String key) {
+    // Parsing [UpdateMessageMoveData] requires `json`, not the default `json[key]`.
+    assert(json is Map<String, dynamic>); // value came through `fromJson` with this type
+    return json as Map<String, dynamic>;
+  }
 
   factory UpdateMessageEvent.fromJson(Map<String, dynamic> json) =>
     _$UpdateMessageEventFromJson(json);
@@ -766,12 +849,70 @@ class UpdateMessageEvent extends Event {
   Map<String, dynamic> toJson() => _$UpdateMessageEventToJson(this);
 }
 
-/// As in [UpdateMessageEvent.propagateMode].
-@JsonEnum(fieldRename: FieldRename.snake)
-enum PropagateMode {
-  changeOne,
-  changeLater,
-  changeAll;
+/// Data structure representing a message move.
+class UpdateMessageMoveData {
+  final int origStreamId;
+  final int newStreamId;
+  final TopicName origTopic;
+  final TopicName newTopic;
+  final PropagateMode propagateMode;
+
+  UpdateMessageMoveData({
+    required this.origStreamId,
+    required this.newStreamId,
+    required this.origTopic,
+    required this.newTopic,
+    required this.propagateMode,
+  }) : assert(newStreamId != origStreamId || newTopic != origTopic);
+
+  /// Try to extract [UpdateMessageMoveData] from the JSON object for an
+  /// [UpdateMessageEvent].
+  ///
+  /// Returns `null` if there was no message move.
+  ///
+  /// Throws an error if the data is malformed.
+  // When parsing this, 'stream_id', which is also present when there was only
+  // a content edit, cannot be recovered if this ends up returning `null`.
+  // This may matter if we ever need 'stream_id' when no message move occurred.
+  static UpdateMessageMoveData? tryParseFromJson(Map<String, Object?> json) {
+    final origStreamId = (json['stream_id'] as num?)?.toInt();
+    final newStreamIdRaw = (json['new_stream_id'] as num?)?.toInt();
+    final newStreamId = newStreamIdRaw ?? origStreamId;
+
+    final origTopic = json['orig_subject'] == null ? null
+      : TopicName.fromJson(json['orig_subject'] as String);
+    final newTopicRaw = json['subject'] == null ? null
+      : TopicName.fromJson(json['subject'] as String);
+    final newTopic = newTopicRaw ?? origTopic;
+
+    final propagateModeString = json['propagate_mode'] as String?;
+    final propagateMode = propagateModeString == null ? null
+      : PropagateMode.fromRawString(propagateModeString);
+
+    if (newStreamId == origStreamId && newTopic == origTopic) {
+      if (propagateMode != null) {
+        throw FormatException(
+          'Malformed UpdateMessageEvent: incoherent message-move fields; '
+          'propagate_mode present but no new channel or topic');
+      }
+      return null;
+    }
+
+    return UpdateMessageMoveData(
+      // The `stream_id` field (aka origStreamId) is documented to be present on moves;
+      // newStreamId should not be null either because it falls back to origStreamId.
+      origStreamId: origStreamId!,
+      newStreamId: newStreamId!,
+
+      // The `orig_subject` field (aka origTopic) is documented to be present on moves;
+      // newTopic should not be null either because it falls back to origTopic.
+      origTopic: origTopic!,
+      newTopic: newTopic!,
+
+      // The `propagate_mode` field (aka propagateMode) is documented to be present on moves.
+      propagateMode: propagateMode!,
+    );
+  }
 }
 
 /// A Zulip event of type `delete_message`: https://zulip.com/api/get-events#delete_message
@@ -788,7 +929,7 @@ class DeleteMessageEvent extends Event {
   @MessageTypeConverter()
   final MessageType messageType;
   final int? streamId;
-  final String? topic;
+  final TopicName? topic;
 
   DeleteMessageEvent({
     required super.id,
@@ -924,7 +1065,7 @@ class UpdateMessageFlagsMessageDetail {
   final bool? mentioned;
   final List<int>? userIds;
   final int? streamId;
-  final String? topic;
+  final TopicName? topic;
 
   UpdateMessageFlagsMessageDetail({
     required this.type,
@@ -1002,7 +1143,7 @@ class TypingEvent extends Event {
   @JsonKey(name: 'recipients', fromJson: _recipientIdsFromJson)
   final List<int>? recipientIds;
   final int? streamId;
-  final String? topic;
+  final TopicName? topic;
 
   TypingEvent({
     required super.id,
@@ -1048,6 +1189,69 @@ enum TypingOp {
   stop;
 
   String toJson() => _$TypingOpEnumMap[this]!;
+}
+
+/// A Zulip event of type `presence`.
+///
+/// See:
+///   https://zulip.com/api/get-events#presence
+@JsonSerializable(fieldRename: FieldRename.snake)
+class PresenceEvent extends Event {
+  @override
+  @JsonKey(includeToJson: true)
+  String get type => 'presence';
+
+  final int userId;
+  // final String email; // deprecated; ignore
+  final int serverTimestamp;
+  final Map<String, PerClientPresence> presence;
+
+  PresenceEvent({
+    required super.id,
+    required this.userId,
+    required this.serverTimestamp,
+    required this.presence,
+  });
+
+  factory PresenceEvent.fromJson(Map<String, dynamic> json) =>
+    _$PresenceEventFromJson(json);
+
+  @override
+  Map<String, dynamic> toJson() => _$PresenceEventToJson(this);
+}
+
+/// A value in [PresenceEvent.presence].
+///
+/// The "per client" name follows the event's structure,
+/// but that structure is already an API wart; see the doc's "Changes" note
+/// on [client] and on the `client_name` key of the map that holds these values:
+///
+/// https://zulip.com/api/get-events#presence
+/// > Starting with Zulip 7.0 (feature level 178), this will always be "website"
+/// > as the server no longer stores which client submitted presence updates.
+///
+/// This will probably be deprecated in favor of a form like [PerUserPresence].
+/// See #1611 and discussion:
+///   https://chat.zulip.org/#narrow/channel/378-api-design/topic/presence.20rewrite/near/2200812
+// TODO(#1611) update comment about #1611
+@JsonSerializable(fieldRename: FieldRename.snake)
+class PerClientPresence {
+  final String client; // always "website" (on 7.0+, so on all supported servers)
+  final PresenceStatus status;
+  final int timestamp;
+  final bool pushable; // always false (on 7.0+, so on all supported servers)
+
+  PerClientPresence({
+    required this.client,
+    required this.status,
+    required this.timestamp,
+    required this.pushable,
+  });
+
+  factory PerClientPresence.fromJson(Map<String, dynamic> json) =>
+    _$PerClientPresenceFromJson(json);
+
+  Map<String, dynamic> toJson() => _$PerClientPresenceToJson(this);
 }
 
 /// A Zulip event of type `reaction`, with op `add` or `remove`.

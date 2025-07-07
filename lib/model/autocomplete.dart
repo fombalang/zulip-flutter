@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import '../api/model/events.dart';
 import '../api/model/model.dart';
 import '../api/route/channels.dart';
+import '../generated/l10n/zulip_localizations.dart';
 import '../widgets/compose_box.dart';
+import 'compose.dart';
 import 'emoji.dart';
 import 'narrow.dart';
 import 'store.dart';
@@ -417,18 +419,21 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
   MentionAutocompleteView._({
     required super.store,
     required super.query,
+    required this.localizations,
     required this.narrow,
     required this.sortedUsers,
   });
 
   factory MentionAutocompleteView.init({
     required PerAccountStore store,
+    required ZulipLocalizations localizations,
     required Narrow narrow,
     required MentionAutocompleteQuery query,
   }) {
     final view = MentionAutocompleteView._(
       store: store,
       query: query,
+      localizations: localizations,
       narrow: narrow,
       sortedUsers: _usersByRelevance(store: store, narrow: narrow),
     );
@@ -438,29 +443,13 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
 
   final Narrow narrow;
   final List<User> sortedUsers;
-
-  @override
-  Future<List<MentionAutocompleteResult>?> computeResults() async {
-    final results = <MentionAutocompleteResult>[];
-    if (await filterCandidates(filter: _testUser,
-          candidates: sortedUsers, results: results)) {
-      return null;
-    }
-    return results;
-  }
-
-  MentionAutocompleteResult? _testUser(MentionAutocompleteQuery query, User user) {
-    if (query.testUser(user, store.autocompleteViewManager.autocompleteDataCache)) {
-      return UserMentionAutocompleteResult(userId: user.userId);
-    }
-    return null;
-  }
+  final ZulipLocalizations localizations;
 
   static List<User> _usersByRelevance({
     required PerAccountStore store,
     required Narrow narrow,
   }) {
-    return store.users.values.toList()
+    return store.allUsers.toList()
       ..sort(_comparator(store: store, narrow: narrow));
   }
 
@@ -485,7 +474,7 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
     required Narrow narrow,
   }) {
     int? streamId;
-    String? topic;
+    TopicName? topic;
     switch (narrow) {
       case ChannelNarrow():
         streamId = narrow.streamId;
@@ -497,6 +486,7 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
       case CombinedFeedNarrow():
       case MentionsNarrow():
       case StarredMessagesNarrow():
+      case KeywordSearchNarrow():
         assert(false, 'No compose box, thus no autocomplete is available in ${narrow.runtimeType}.');
     }
     return (userA, userB) => _compareByRelevance(userA, userB,
@@ -506,11 +496,9 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
 
   static int _compareByRelevance(User userA, User userB, {
     required int? streamId,
-    required String? topic,
+    required TopicName? topic,
     required PerAccountStore store,
   }) {
-    // TODO(#234): give preference to "all", "everyone" or "stream"
-
     // TODO(#618): give preference to subscribed users first
 
     if (streamId != null) {
@@ -543,7 +531,7 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
   @visibleForTesting
   static int compareByRecency(User userA, User userB, {
     required int streamId,
-    required String? topic,
+    required TopicName? topic,
     required PerAccountStore store,
   }) {
     final recentSenders = store.recentSenders;
@@ -569,7 +557,6 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
   /// returns a positive number if [userB] is more recent than [userA],
   /// and returns `0` if both [userA] and [userB] are equally recent
   /// or there is no DM exchanged with them whatsoever.
-  @visibleForTesting
   static int compareByDms(User userA, User userB, {required PerAccountStore store}) {
     final recentDms = store.recentDmConversationsView;
     final aLatestMessageId = recentDms.latestMessagesByRecipient[userA.userId];
@@ -615,6 +602,59 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
     return userAName.compareTo(userBName); // TODO(i18n): add locale-aware sorting
   }
 
+  void computeWildcardMentionResults({
+    required List<MentionAutocompleteResult> results,
+    required bool isComposingChannelMessage,
+  }) {
+    if (query.silent) return;
+
+    bool tryOption(WildcardMentionOption option) {
+      if (query.testWildcardOption(option, localizations: localizations)) {
+        results.add(WildcardMentionAutocompleteResult(wildcardOption: option));
+        return true;
+      }
+      return false;
+    }
+
+    // Only one of the (all, everyone, channel, stream) channel wildcards are
+    // shown.
+    all: {
+      if (tryOption(WildcardMentionOption.all)) break all;
+      if (tryOption(WildcardMentionOption.everyone)) break all;
+      if (isComposingChannelMessage) {
+        final isChannelWildcardAvailable = store.zulipFeatureLevel >= 247; // TODO(server-9)
+        if (isChannelWildcardAvailable && tryOption(WildcardMentionOption.channel)) break all;
+        if (tryOption(WildcardMentionOption.stream)) break all;
+      }
+    }
+
+    final isTopicWildcardAvailable = store.zulipFeatureLevel >= 224; // TODO(server-8)
+    if (isComposingChannelMessage && isTopicWildcardAvailable) {
+      tryOption(WildcardMentionOption.topic);
+    }
+  }
+
+  @override
+  Future<List<MentionAutocompleteResult>?> computeResults() async {
+    final results = <MentionAutocompleteResult>[];
+    // Give priority to wildcard mentions.
+    computeWildcardMentionResults(results: results,
+      isComposingChannelMessage: narrow is ChannelNarrow || narrow is TopicNarrow);
+
+    if (await filterCandidates(filter: _testUser,
+        candidates: sortedUsers, results: results)) {
+      return null;
+    }
+    return results;
+  }
+
+  MentionAutocompleteResult? _testUser(MentionAutocompleteQuery query, User user) {
+    if (query.testUser(user, store.autocompleteViewManager.autocompleteDataCache)) {
+      return UserMentionAutocompleteResult(userId: user.userId);
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     store.autocompleteViewManager.unregisterMentionAutocomplete(this);
@@ -642,13 +682,17 @@ class MentionAutocompleteView extends AutocompleteView<MentionAutocompleteQuery,
 /// to prepare for whatever particular form of searching will be done
 /// for the given type of autocomplete interaction.
 abstract class AutocompleteQuery {
-  AutocompleteQuery(this.raw)
-    : _lowercaseWords = raw.toLowerCase().split(' ');
+  AutocompleteQuery(this.raw) {
+    _lowercase = raw.toLowerCase();
+    _lowercaseWords = _lowercase.split(' ');
+  }
 
   /// The actual string the user entered.
   final String raw;
 
-  final List<String> _lowercaseWords;
+  late final String _lowercase;
+
+  late final List<String> _lowercaseWords;
 
   /// Whether all of this query's words have matches in [words] that appear in order.
   ///
@@ -679,7 +723,11 @@ abstract class ComposeAutocompleteQuery extends AutocompleteQuery {
 
   /// Construct an [AutocompleteView] initialized with this query
   /// and ready to handle queries of the same type.
-  ComposeAutocompleteView initViewModel(PerAccountStore store, Narrow narrow);
+  ComposeAutocompleteView initViewModel({
+    required PerAccountStore store,
+    required ZulipLocalizations localizations,
+    required Narrow narrow,
+  });
 }
 
 /// A @-mention autocomplete query, used by [MentionAutocompleteView].
@@ -690,13 +738,24 @@ class MentionAutocompleteQuery extends ComposeAutocompleteQuery {
   final bool silent;
 
   @override
-  MentionAutocompleteView initViewModel(PerAccountStore store, Narrow narrow) {
-    return MentionAutocompleteView.init(store: store, narrow: narrow, query: this);
+  MentionAutocompleteView initViewModel({
+    required PerAccountStore store,
+    required ZulipLocalizations localizations,
+    required Narrow narrow,
+  }) {
+    return MentionAutocompleteView.init(
+      store: store, localizations: localizations, narrow: narrow, query: this);
+  }
+
+  bool testWildcardOption(WildcardMentionOption wildcardOption, {
+      required ZulipLocalizations localizations}) {
+    // TODO(#237): match insensitively to diacritics
+    return wildcardOption.canonicalString.contains(_lowercase)
+      || wildcardOption.localizedCanonicalString(localizations).contains(_lowercase);
   }
 
   bool testUser(User user, AutocompleteDataCache cache) {
     // TODO(#236) test email too, not just name
-
     if (!user.isActive) return false;
 
     return _testName(user, cache);
@@ -718,6 +777,19 @@ class MentionAutocompleteQuery extends ComposeAutocompleteQuery {
 
   @override
   int get hashCode => Object.hash('MentionAutocompleteQuery', raw, silent);
+}
+
+extension WildcardMentionOptionExtension on WildcardMentionOption {
+  /// A translation of [canonicalString], from [localizations].
+  String localizedCanonicalString(ZulipLocalizations localizations) {
+    return switch (this) {
+      WildcardMentionOption.all      => localizations.wildcardMentionAll,
+      WildcardMentionOption.everyone => localizations.wildcardMentionEveryone,
+      WildcardMentionOption.channel  => localizations.wildcardMentionChannel,
+      WildcardMentionOption.stream   => localizations.wildcardMentionStream,
+      WildcardMentionOption.topic    => localizations.wildcardMentionTopic,
+    };
+  }
 }
 
 /// Cached data that is used for autocomplete
@@ -788,9 +860,14 @@ class UserMentionAutocompleteResult extends MentionAutocompleteResult {
   final int userId;
 }
 
-// TODO(#233): // class UserGroupMentionAutocompleteResult extends MentionAutocompleteResult {
+/// An autocomplete result for an @-mention of all the users in a conversation.
+class WildcardMentionAutocompleteResult extends MentionAutocompleteResult {
+  WildcardMentionAutocompleteResult({required this.wildcardOption});
 
-// TODO(#234): // class WildcardMentionAutocompleteResult extends MentionAutocompleteResult {
+  final WildcardMentionOption wildcardOption;
+}
+
+// TODO(#233): // class UserGroupMentionAutocompleteResult extends MentionAutocompleteResult {
 
 /// An autocomplete interaction for choosing a topic for a message.
 class TopicAutocompleteView extends AutocompleteView<TopicAutocompleteQuery, TopicAutocompleteResult> {
@@ -815,7 +892,7 @@ class TopicAutocompleteView extends AutocompleteView<TopicAutocompleteQuery, Top
   /// The channel/stream the eventual message will be sent to.
   final int streamId;
 
-  Iterable<String> _topics = [];
+  Iterable<TopicName> _topics = [];
   bool _isFetching = false;
 
   /// Fetches topics of the current stream narrow, expected to fetch
@@ -827,7 +904,9 @@ class TopicAutocompleteView extends AutocompleteView<TopicAutocompleteQuery, Top
   Future<void> _fetch() async {
      assert(!_isFetching);
     _isFetching = true;
-    final result = await getStreamTopics(store.connection, streamId: streamId);
+    final result = await getStreamTopics(store.connection, streamId: streamId,
+      allowEmptyTopicName: true,
+    );
     _topics = result.topics.map((e) => e.name);
     _isFetching = false;
     return _startSearch();
@@ -843,8 +922,8 @@ class TopicAutocompleteView extends AutocompleteView<TopicAutocompleteQuery, Top
     return results;
   }
 
-  TopicAutocompleteResult? _testTopic(TopicAutocompleteQuery query, String topic) {
-    if (query.testTopic(topic)) {
+  TopicAutocompleteResult? _testTopic(TopicAutocompleteQuery query, TopicName topic) {
+    if (query.testTopic(topic, store)) {
       return TopicAutocompleteResult(topic: topic);
     }
     return null;
@@ -862,9 +941,15 @@ class TopicAutocompleteView extends AutocompleteView<TopicAutocompleteQuery, Top
 class TopicAutocompleteQuery extends AutocompleteQuery {
   TopicAutocompleteQuery(super.raw);
 
-  bool testTopic(String topic) {
+  bool testTopic(TopicName topic, PerAccountStore store) {
     // TODO(#881): Sort by match relevance, like web does.
-    return topic != raw && topic.toLowerCase().contains(raw.toLowerCase());
+
+    if (topic.displayName == null) {
+      return store.realmEmptyTopicDisplayName.toLowerCase()
+        .contains(raw.toLowerCase());
+    }
+    return topic.displayName != raw
+      && topic.displayName!.toLowerCase().contains(raw.toLowerCase());
   }
 
   @override
@@ -883,7 +968,7 @@ class TopicAutocompleteQuery extends AutocompleteQuery {
 
 /// A topic chosen in an autocomplete interaction, via a [TopicAutocompleteView].
 class TopicAutocompleteResult extends AutocompleteResult {
-  final String topic;
+  final TopicName topic;
 
   TopicAutocompleteResult({required this.topic});
 }

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../api/model/model.dart';
+import '../generated/l10n/zulip_localizations.dart';
 import '../model/narrow.dart';
 import '../model/unreads.dart';
+import 'action_sheet.dart';
 import 'icons.dart';
 import 'message_list.dart';
+import 'page.dart';
 import 'store.dart';
 import 'text.dart';
 import 'theme.dart';
@@ -41,10 +44,22 @@ class _SubscriptionListPageBodyState extends State<SubscriptionListPageBody> wit
     });
   }
 
+  static final _startsWithEmojiRegex = RegExp(r'^\p{Emoji}', unicode: true);
+
   void _sortSubs(List<Subscription> list) {
     list.sort((a, b) {
       if (a.isMuted && !b.isMuted) return 1;
       if (!a.isMuted && b.isMuted) return -1;
+
+      // A user gave feedback wanting zulip-flutter to match web in putting
+      // emoji-prefixed channels first; see #1202.
+      // For matching web's ordering completely, see:
+      //   https://github.com/zulip/zulip-flutter/issues/1165
+      final aStartsWithEmoji = _startsWithEmojiRegex.hasMatch(a.name);
+      final bStartsWithEmoji = _startsWithEmojiRegex.hasMatch(b.name);
+      if (aStartsWithEmoji && !bStartsWithEmoji) return -1;
+      if (!aStartsWithEmoji && bStartsWithEmoji) return 1;
+
       // TODO(i18n): add locale-aware sorting
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
@@ -65,10 +80,8 @@ class _SubscriptionListPageBodyState extends State<SubscriptionListPageBody> wit
 
     // TODO: Implement collapsible topics
 
-    // TODO(i18n): localize strings on page
-    //   Strings here left unlocalized as they likely will not
-    //   exist in the settled design.
     final store = PerAccountStoreWidget.of(context);
+    final zulipLocalizations = ZulipLocalizations.of(context);
 
     final List<Subscription> pinned = [];
     final List<Subscription> unpinned = [];
@@ -82,19 +95,23 @@ class _SubscriptionListPageBodyState extends State<SubscriptionListPageBody> wit
     _sortSubs(pinned);
     _sortSubs(unpinned);
 
+    if (pinned.isEmpty && unpinned.isEmpty) {
+      return PageBodyEmptyContentPlaceholder(
+        // TODO(#188) add e.g. "Go to 'All channels' and join some of them."
+        message: zulipLocalizations.channelsEmptyPlaceholder);
+    }
+
     return SafeArea(
       // Don't pad the bottom here; we want the list content to do that.
       bottom: false,
       child: CustomScrollView(
         slivers: [
-          if (pinned.isEmpty && unpinned.isEmpty)
-            const _NoSubscriptionsItem(),
           if (pinned.isNotEmpty) ...[
-            const _SubscriptionListHeader(label: "Pinned"),
+            _SubscriptionListHeader(label: zulipLocalizations.pinnedSubscriptionsLabel),
             _SubscriptionList(unreadsModel: unreadsModel, subscriptions: pinned),
           ],
           if (unpinned.isNotEmpty) ...[
-            const _SubscriptionListHeader(label: "Unpinned"),
+            _SubscriptionListHeader(label: zulipLocalizations.unpinnedSubscriptionsLabel),
             _SubscriptionList(unreadsModel: unreadsModel, subscriptions: unpinned),
           ],
 
@@ -103,26 +120,6 @@ class _SubscriptionListPageBodyState extends State<SubscriptionListPageBody> wit
           // This ensures last item in scrollable can settle in an unobstructed area.
           const SliverSafeArea(sliver: SliverToBoxAdapter(child: SizedBox.shrink())),
         ]));
-  }
-}
-
-class _NoSubscriptionsItem extends StatelessWidget {
-  const _NoSubscriptionsItem();
-
-  @override
-  Widget build(BuildContext context) {
-    final designVariables = DesignVariables.of(context);
-
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Text("No channels found",
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: designVariables.subscriptionListHeaderText,
-            fontSize: 18,
-            height: (20 / 18),
-          ))));
   }
 }
 
@@ -218,6 +215,7 @@ class SubscriptionItem extends StatelessWidget {
             MessageListPage.buildRoute(context: context,
               narrow: ChannelNarrow(subscription.streamId)));
         },
+        onLongPress: () => showChannelActionSheet(context, channelId: subscription.streamId),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           const SizedBox(width: 16),
           Padding(
